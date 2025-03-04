@@ -1,0 +1,5 @@
+opencv-python
+numpy
+flask
+tensorflow   # ou torch, dependendo da escolha para o treinamento
+Pillow
