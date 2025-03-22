@@ -49,8 +49,7 @@ def criar_tabela():
         cursor.close()
         conn.close()
 
-def inserir_deteccao(objeto, box, alinhado, line_y):
-    """Insere uma detecção no banco de dados."""
+def inserir_deteccao(objeto, track_id, box, alinhado, line_y):
     x, y, w, h = box
     conn = criar_conexao()
     if conn is None:
@@ -58,14 +57,14 @@ def inserir_deteccao(objeto, box, alinhado, line_y):
         return
     cursor = conn.cursor()
     insert_query = """
-        INSERT INTO Detecoes (objeto, x, y, w, h, alinhado, line_y)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        INSERT INTO Detecoes (objeto, track_id, x, y, w, h, alinhado, line_y)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
     """
-    data = (objeto, x, y, w, h, alinhado, line_y if line_y is not None else 0)
+    data = (objeto, track_id, x, y, w, h, alinhado, line_y if line_y is not None else 0)
     try:
         cursor.execute(insert_query, data)
         conn.commit()
-        print(f"Detecção inserida: {objeto} em ({x}, {y}, {w}, {h}) | Alinhado: {alinhado}")
+        print(f"Detecção inserida: {objeto} (ID {track_id}) em ({x}, {y}, {w}, {h}) | Alinhado: {alinhado}")
     except Error as e:
         print(f"Erro ao inserir a detecção: {e}")
     finally:
@@ -74,5 +73,5 @@ def inserir_deteccao(objeto, box, alinhado, line_y):
 
 if __name__ == "__main__":
     criar_tabela()
-    # Teste de inserção
-    inserir_deteccao("caixa", [100, 150, 50, 60], True, 200)
+    # Teste de inserção:
+    inserir_deteccao("person", 1, [100, 150, 50, 60], True, 200)

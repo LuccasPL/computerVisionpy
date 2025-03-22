@@ -41,6 +41,8 @@ def main():
 
             # Detecta os objetos na imagem (por exemplo, usando YOLO)
             objects = detect_objects(frame)
+            print("Detecções:", objects)
+
 
             # Formata as detecções para o tracker SORT: [x1, y1, x2, y2, score]
             detections = []
@@ -60,16 +62,11 @@ def main():
             last_detections = []  
             for d in tracks:
                 x1, y1, x2, y2, track_id = d
-                # Converte para formato [x, y, w, h]
                 box = [int(x1), int(y1), int(x2 - x1), int(y2 - y1)]
-                # Verifica se o objeto está alinhado com alguma prateleira
                 aligned, line_y = is_aligned(box, shelf_lines)
                 last_detections.append((box, track_id, aligned))
-                # Imprime as coordenadas e o ID no console
                 print(f"Objeto ID {int(track_id)} -> (x={box[0]}, y={box[1]}, w={box[2]}, h={box[3]}) | Alinhado: {aligned}")
-                # Insere no banco de dados (opcional)
-                # Supondo que a classe seja "person" ou outra, você pode adaptar:
-                inserir_deteccao("person", box, aligned, line_y if line_y is not None else 0)
+                inserir_deteccao(obj["class"], int(track_id), box, aligned, line_y)
 
             last_detection_time = current_time
 
