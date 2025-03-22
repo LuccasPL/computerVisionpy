@@ -1,16 +1,12 @@
-import sys
-print("Python usado:", sys.executable)
-
-
 import mysql.connector
 from mysql.connector import Error
 
 # Configurações para conectar ao MySQL
 DB_CONFIG = {
-    'host': 'localhost',       # ou o IP/hostname do seu servidor MySQL
-    'user': 'root',      # substitua pelo seu usuário MySQL
-    'password': '78517231Le!',    # substitua pela sua senha MySQL
-    'database': 'deteccoes_db'  # nome do banco de dados que você criou
+    'host': 'localhost',       
+    'user': 'root',      
+    'password': '78517231Le!',    
+    'database': 'deteccoes_db'  
 }
 
 def criar_conexao():
