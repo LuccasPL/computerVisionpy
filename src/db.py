@@ -71,6 +71,29 @@ def inserir_deteccao(objeto, track_id, box, alinhado, line_y):
         cursor.close()
         conn.close()
 
+def inserir_evento(track_id, objeto, prateleira, evento):
+    """Insere um evento (entrada, saída, troca) no banco de dados."""
+    conn = criar_conexao()
+    if conn is None:
+        print("Erro: conexão não estabelecida!")
+        return
+    cursor = conn.cursor()
+    insert_query = """
+        INSERT INTO Eventos (track_id, objeto, prateleira, evento)
+        VALUES (%s, %s, %s, %s)
+    """
+    data = (track_id, objeto, prateleira, evento)
+    try:
+        cursor.execute(insert_query, data)
+        conn.commit()
+        print(f"Evento inserido: Objeto '{objeto}' (ID {track_id}) - {evento} na prateleira {prateleira}")
+    except Exception as e:
+        print(f"Erro ao inserir o evento: {e}")
+    finally:
+        cursor.close()
+        conn.close()
+
+
 if __name__ == "__main__":
     criar_tabela()
     # Teste de inserção:
