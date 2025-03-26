@@ -1,6 +1,6 @@
 import json
 
-def carregar_rois(caminho="data/annotations/rois.json"):
+def carregar_rois(caminho="data\annotations\rois_live.json"):
     """
     Carrega as ROIs salvas em formato JSON.
     Cada ROI deve estar em um dicionário com as chaves:

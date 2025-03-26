@@ -12,7 +12,7 @@ def main():
     # Certifique-se de que a tabela Eventos já foi criada (execute o comando SQL manualmente ou adicione a criação aqui)
 
     # Carrega as ROIs calibradas
-    rois = carregar_rois()
+    rois = carregar_rois("data/annotations/rois_live.json")
     if not rois:
         print("Nenhuma ROI carregada. Calibre as prateleiras antes de iniciar.")
     
