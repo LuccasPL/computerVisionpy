@@ -1,61 +1,145 @@
-# src/dashboard.py
-from flask import Flask, render_template, Response
-import cv2
-import numpy as np
-from detection import detect_objects  # Função já existente para detecção de objetos
-from shelf_detection import preprocess_for_shelf_detection, detect_shelf_lines, is_aligned
+from flask import Flask, render_template, request
+import mysql.connector
+from mysql.connector import Error
+import csv
+from flask import Response
 
 app = Flask(__name__)
 
-def generate_frames():
-    cap = cv2.VideoCapture(0)
-    while True:
-        success, frame = cap.read()
-        if not success:
-            break
-        
-        # Pré-processa o frame para detectar as prateleiras
-        preprocessed = preprocess_for_shelf_detection(frame)
-        shelf_lines = detect_shelf_lines(preprocessed)
+DB_CONFIG = {
+    'host': 'localhost',       
+    'user': 'root',      
+    'password': '78517231Le!',    
+    'database': 'deteccoes_db'  
+}
 
-        # Detecta os objetos na imagem
-        objects = detect_objects(frame)
+def get_connection():
+    try:
+        conn = mysql.connector.connect(**DB_CONFIG)
+        return conn
+    except Error as e:
+        print("Erro ao conectar ao MySQL:", e)
+        return None
 
-        # Para cada objeto detectado, verifica o alinhamento com as prateleiras
-        for obj in objects:
-            box = obj["box"]
-            aligned, _ = is_aligned(box, shelf_lines, tolerance=20)
-            color = (0, 255, 0) if aligned else (0, 0, 255)
-            x, y, w, h = box
-            cv2.rectangle(frame, (x, y), (x+w, y+h), color, 2)
-            label = f"{obj['class']} - {'Alinhado' if aligned else 'Desalinhado'}"
-            cv2.putText(frame, label, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-
-        # Opcional: Desenha as linhas das prateleiras detectadas
-        if shelf_lines is not None:
-            for rho, theta in shelf_lines:
-                a = np.cos(theta)
-                b = np.sin(theta)
-                x0 = a * rho
-                y0 = b * rho
-                pt1 = (int(x0 + 1000 * (-b)), int(y0 + 1000 * (a)))
-                pt2 = (int(x0 - 1000 * (-b)), int(y0 - 1000 * (a)))
-                cv2.line(frame, pt1, pt2, (255, 0, 0), 2)
-
-        ret, buffer = cv2.imencode('.jpg', frame)
-        frame_bytes = buffer.tobytes()
-        yield (b'--frame\r\n'
-               b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-
-    cap.release()
-
-@app.route('/')
+@app.route("/", methods=["GET"])
 def index():
-    return render_template('dashboard.html')
+    # Recupera os parâmetros de filtro da URL (se existirem)
+    data_inicial = request.args.get("data_inicial")
+    data_final = request.args.get("data_final")
+    prateleira_filtro = request.args.get("prateleira")
+    
+    conn = get_connection()
+    if conn is None:
+        return "Erro na conexão com o banco de dados."
+    
+    cursor = conn.cursor(dictionary=True)
+    
+    # Consulta 1: Total de entradas por prateleira, com filtro opcional
+    query1 = "SELECT prateleira, COUNT(*) AS total_entradas FROM Eventos WHERE evento = 'entrada'"
+    params = []
+    if prateleira_filtro:
+        query1 += " AND prateleira = %s"
+        params.append(prateleira_filtro)
+    query1 += " GROUP BY prateleira;"
+    cursor.execute(query1, params)
+    entradas_por_prateleira = cursor.fetchall()
+    
+    # Consulta 2: Eventos por data, com filtro de datas se fornecido
+    query2 = "SELECT DATE(timestamp) AS data, COUNT(*) AS total_eventos FROM Eventos WHERE 1=1"
+    params = []
+    if data_inicial:
+        query2 += " AND timestamp >= %s"
+        params.append(data_inicial)
+    if data_final:
+        query2 += " AND timestamp <= %s"
+        params.append(data_final)
+    query2 += " GROUP BY DATE(timestamp) ORDER BY data;"
+    cursor.execute(query2, params)
+    eventos_por_data = cursor.fetchall()
 
-@app.route('/video_feed')
-def video_feed():
-    return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
+    # Consulta 3: Os 10 eventos mais recentes (podemos deixar sem filtro ou aplicar os filtros também)
+    query3 = "SELECT track_id, objeto, prateleira, evento, timestamp FROM Eventos"
+    filters = []
+    params = []
+    if data_inicial:
+        filters.append("timestamp >= %s")
+        params.append(data_inicial)
+    if data_final:
+        filters.append("timestamp <= %s")
+        params.append(data_final)
+    if prateleira_filtro:
+        filters.append("prateleira = %s")
+        params.append(prateleira_filtro)
+    if filters:
+        query3 += " WHERE " + " AND ".join(filters)
+    query3 += " ORDER BY timestamp DESC LIMIT 10;"
+    cursor.execute(query3, params)
+    eventos_recentes = cursor.fetchall()
+    
+    # Consulta 4: Total de eventos para resumo (com filtro se desejado)
+    query4 = "SELECT COUNT(*) AS total_eventos FROM Eventos WHERE 1=1"
+    params = []
+    if data_inicial:
+        query4 += " AND timestamp >= %s"
+        params.append(data_inicial)
+    if data_final:
+        query4 += " AND timestamp <= %s"
+        params.append(data_final)
+    cursor.execute(query4, params)
+    total_eventos = cursor.fetchone()["total_eventos"]
 
-if __name__ == '__main__':
-    app.run(host="0.0.0.0", port=5001)
+    cursor.close()
+    conn.close()
+    
+    return render_template("dashboard.html",
+                           entradas=entradas_por_prateleira,
+                           eventos=eventos_por_data,
+                           recentes=eventos_recentes,
+                           total_eventos=total_eventos,
+                           data_inicial=data_inicial or "",
+                           data_final=data_final or "",
+                           prateleira_filtro=prateleira_filtro or "")
+
+@app.route("/export")
+def export_csv():
+    # Recupera os parâmetros de filtro da query string
+    data_inicial = request.args.get("data_inicial")
+    data_final = request.args.get("data_final")
+    prateleira_filtro = request.args.get("prateleira")
+    
+    conn = get_connection()
+    if conn is None:
+        return "Erro na conexão com o banco de dados."
+    
+    cursor = conn.cursor(dictionary=True)
+    
+    # Consulta para exportar os eventos filtrados
+    query = "SELECT * FROM Eventos WHERE 1=1"
+    params = []
+    if data_inicial:
+        query += " AND timestamp >= %s"
+        params.append(data_inicial)
+    if data_final:
+        query += " AND timestamp <= %s"
+        params.append(data_final)
+    if prateleira_filtro:
+        query += " AND prateleira = %s"
+        params.append(prateleira_filtro)
+    query += " ORDER BY timestamp DESC;"
+    cursor.execute(query, params)
+    eventos = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    
+    def generate():
+        data = []
+        header = eventos[0].keys() if eventos else []
+        data.append(",".join(header) + "\n")
+        for row in eventos:
+            data.append(",".join(str(row[col]) for col in header) + "\n")
+        return "".join(data)
+    
+    return Response(generate(), mimetype="text/csv", headers={"Content-Disposition": "attachment;filename=eventos.csv"})
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)
