@@ -2,140 +2,217 @@ import cv2
 import time
 import numpy as np
 from detection import detect_objects
-from shelf_detection import preprocess_for_shelf_detection, detect_shelf_lines, is_aligned
+from shelf_detection import preprocess_for_shelf_detection, detect_shelf_lines
 from roi_manager import carregar_rois, verificar_roi
 from db import criar_tabela, inserir_deteccao, inserir_evento
 from deep_sort_realtime.deepsort_tracker import DeepSort
 
-# Instancia o tracker Deep SORT com os parâmetros desejados
-tracker = DeepSort(max_age=30, n_init=3, nn_budget=100, override_track_class=None, embedder="mobilenet")
+# Lista de classes permitidas
+allowed_classes = ["sports ball", "tennis racket"]
+
+# Parâmetro para reduzir o tamanho das bounding boxes (se desejado)
+scale_factor = 0.9
+
+# Instancia o tracker Deep SORT com max_age ajustado para não manter o track por muito tempo
+tracker = DeepSort(max_age=2,  # ou 3
+                   n_init=3, 
+                   nn_budget=100, 
+                   override_track_class=None, 
+                   embedder="mobilenet")
+
 
 def get_center(box):
-    # box: [x, y, w, h]
     x, y, w, h = box
     return (x + w/2, y + h/2)
 
-def associate_detection_with_track(track_box, detections):
+def associate_detection_with_track(track_box, detections, allowed_class=None):
     """
-    Associa o track_box (formato [x1, y1, x2, y2]) a uma das detecções originais,
-    comparando a distância entre os centros.
-    Retorna o dicionário de detecção correspondente.
+    Associa track_box ([x1, y1, x2, y2]) a uma detecção do YOLO que tenha,
+    opcionalmente, a mesma allowed_class e seja a mais próxima (menor distância entre centros).
+    Retorna o dicionário da detecção ou None.
     """
     tx = (track_box[0] + track_box[2]) / 2
     ty = (track_box[1] + track_box[3]) / 2
     best_det = None
     best_dist = float('inf')
     for det in detections:
-        cx, cy = get_center(det["box"])
-        dist = np.sqrt((tx - cx)**2 + (ty - cy)**2)
+        if allowed_class is not None and det["class"] != allowed_class:
+            continue
+        x, y, w, h = det["box"]
+        cx, cy = x + w/2, y + h/2
+        dist = ((tx - cx)**2 + (ty - cy)**2)**0.5
         if dist < best_dist:
             best_dist = dist
             best_det = det
     return best_det
 
 def main():
-    # Cria as tabelas necessárias no banco de dados
     criar_tabela()
-    # Carrega as ROIs salvas (do calibracao_live.py)
     rois = carregar_rois("data/annotations/rois_live.json")
     if not rois:
         print("Nenhuma ROI carregada. Calibre as prateleiras antes de iniciar.")
-    
+        return
+
     cap = cv2.VideoCapture(0)
-    detection_interval = 5.0  # Detecção a cada 5 segundos
+    if not cap.isOpened():
+        print("Erro ao acessar a webcam.")
+        return
+
+    detection_interval = 3.0  # Processa a cada 3 segundos
     last_detection_time = time.time()
-    last_detections = []
-    
-    # Dicionário para manter o estado dos objetos (track_id: prateleira atual)
-    estado_objetos = {}
+
+    # Dicionários de estado para cada track_id:
+    estado_objetos = {}    # track_id -> (prateleira, bounding_box)
+    classe_objetos = {}    # track_id -> classe
+    ultima_insercao = {}    # track_id -> (prateleira, bounding_box)
+
+    prev_detections = []   # Para desenho (lista de tuplas: (box, class, track_id, prateleira))
+
+    # Limiar de ciclos sem update para disparar evento de saída
+    TIME_SINCE_UPDATE_THRESHOLD = 2
 
     while True:
         ret, frame = cap.read()
         if not ret:
+            print("Falha ao capturar frame!")
             break
+
         current_time = time.time()
         elapsed = current_time - last_detection_time
+        curr_detections = []  # Detecções deste ciclo para desenho
 
         if elapsed >= detection_interval:
-            # Pré-processamento para detecção de prateleiras
-            preprocessed = preprocess_for_shelf_detection(frame)
-            shelf_lines = detect_shelf_lines(preprocessed)
+            preproc = preprocess_for_shelf_detection(frame)
+            shelf_lines = detect_shelf_lines(preproc)
             objects = detect_objects(frame)
+            objects = [obj for obj in objects if obj["class"] in allowed_classes]
 
-            # Converter as detecções para o formato que o Deep SORT espera:
-            # Uma lista onde cada elemento é: ([x1, y1, x2, y2], confidence)
             tracker_dets = []
             for obj in objects:
                 x, y, w, h = obj["box"]
                 conf = obj["confidence"]
-                x1, y1 = x, y
-                x2, y2 = x + w, y + h
-                tracker_dets.append(([x1, y1, x2, y2], conf))
-            
-            # Atualiza o tracker com as detecções
+                tracker_dets.append(([x, y, x+w, y+h], conf))
+            # Manter tracker_dets como lista
             tracks = tracker.update_tracks(tracker_dets, frame=frame)
-            last_detections = []
 
-            # Para associar a detecção original (para obter a classe) com o tracker, use a função auxiliar
+            current_ids = set()
             for track in tracks:
                 if not track.is_confirmed():
                     continue
                 track_id = track.track_id
+                current_ids.add(track_id)
                 bbox = track.to_ltrb()  # [x1, y1, x2, y2]
                 x1, y1, x2, y2 = map(int, bbox)
-                box = [x1, y1, x2 - x1, y2 - y1]
-                # Associa a detecção original mais próxima ao track para obter a classe
-                associated_det = associate_detection_with_track(bbox, objects)
-                if associated_det is not None:
-                    obj_class = associated_det["class"]
+                
+                # Se já houver classe para o track, obrigue a essa classe
+                allowed_cls = classe_objetos.get(track_id, None)
+                associated_det = associate_detection_with_track(bbox, objects, allowed_class=allowed_cls)
+                if associated_det is None:
+                    continue
+                x, y, w, h = associated_det["box"]
+                obj_class = associated_det["class"]
+
+                # Se não houver classe registrada ainda, defina agora
+                if track_id not in classe_objetos:
+                    classe_objetos[track_id] = obj_class
                 else:
-                    obj_class = "unknown"
+                    if classe_objetos[track_id] != obj_class:
+                        print(f"Forçando saída do track {track_id}. O objeto era {classe_objetos[track_id]}, mas apareceu {obj_class}")
+                        # 1) Dispara evento de saída para a classe antiga
+                        prateleira_ant, _ = estado_objetos[track_id]
+                        inserir_evento(track_id, classe_objetos[track_id], prateleira_ant, "saída")
+                        # 2) Remove o track do estado
+                        del estado_objetos[track_id]
+                        del classe_objetos[track_id]
+                        if track_id in ultima_insercao:
+                            del ultima_insercao[track_id]
+                        # 3) Força o track a sumir do Deep SORT
+                        track.time_since_update = 999
+                        continue
 
-                # Verifica o alinhamento (opcional)
-                aligned, _ = is_aligned(box, shelf_lines)
 
-                # Calcula o centro do objeto para verificar em qual ROI ele está
-                center = (x1 + (x2 - x1) // 2, y1 + (y2 - y1) // 2)
+                adjusted_box = [x, y, w, h]  # Usa a caixa original do YOLO
+
+                center = (x + w//2, y + h//2)
                 in_roi, roi = verificar_roi(center, rois)
                 prateleira_atual = f"Prateleira {roi['id']}" if in_roi else "Fora da prateleira"
 
-                # Registra eventos de entrada/saída
-                estado_anterior = estado_objetos.get(track_id)
+                estado_anterior = estado_objetos.get(track_id)  # por ex.: ("Prateleira 2", (100, 150, 50, 60))
+                novo_estado = (prateleira_atual, tuple(adjusted_box))
+
                 if estado_anterior is None:
-                    if in_roi:
+                    # Primeiro registro do objeto
+                    if prateleira_atual != "Fora da prateleira":
                         inserir_evento(track_id, obj_class, prateleira_atual, "entrada")
                     else:
-                        inserir_evento(track_id, obj_class, "N/A", "não identificado")
+                        inserir_evento(track_id, obj_class, "Fora da prateleira", "não identificado")
+                    inserir_deteccao(obj_class, track_id, adjusted_box, True, roi["y1"] if in_roi else 0)
+                    estado_objetos[track_id] = novo_estado
+                    ultima_insercao[track_id] = novo_estado
                 else:
-                    if estado_anterior != prateleira_atual:
-                        if estado_anterior != "Fora da prateleira":
-                            inserir_evento(track_id, obj_class, estado_anterior, "saída")
-                        if in_roi:
-                            inserir_evento(track_id, obj_class, prateleira_atual, "entrada")
-                estado_objetos[track_id] = prateleira_atual
+                    antiga_prat, antiga_box = estado_anterior
+                    nova_prat, nova_box = novo_estado
+                    
+                    # Se a prateleira REALMENTE mudou
+                    if antiga_prat != nova_prat:
+                        # Só registra saída se a prateleira anterior não for "Fora da prateleira"
+                        if antiga_prat != "Fora da prateleira":
+                            inserir_evento(track_id, obj_class, antiga_prat, "saída")
+                        # Só registra entrada se a nova prateleira não for "Fora da prateleira"
+                        if nova_prat != "Fora da prateleira":
+                            inserir_evento(track_id, obj_class, nova_prat, "entrada")
+                    else:
+                        # Caso a prateleira seja a MESMA, NÃO dispara saída/entrada
+                        # Apenas inserimos a detecção se a bounding box mudou significativamente
+                        pass  # ou continue para não inserir nada
+                    
+                    # Se quiser registrar a mudança de bounding box na tabela de Detecoes,
+                    # mas sem gerar saída/entrada, faça:
+                    if nova_box != antiga_box:
+                        inserir_deteccao(obj_class, track_id, adjusted_box, True, roi["y1"] if in_roi else 0)
+                    
+                    # Atualiza estado
+                    estado_objetos[track_id] = novo_estado
+                    ultima_insercao[track_id] = novo_estado
 
-                last_detections.append((box, obj_class, track_id, aligned, prateleira_atual))
-                x_disp, y_disp, w_disp, h_disp = box
-                print(f"Objeto '{obj_class}' (ID {track_id}) -> (x={x_disp}, y={y_disp}, w={w_disp}, h={h_disp}) | {prateleira_atual} | Alinhado: {aligned}")
-                inserir_deteccao(obj_class, int(track_id), box, aligned, roi["y1"] if in_roi else 0)
-            
+
+                curr_detections.append((adjusted_box, obj_class, track_id, prateleira_atual))
+
             last_detection_time = current_time
 
-        # Desenha os resultados no frame
-        for (box, obj_class, track_id, aligned, prateleira_atual) in last_detections:
-            x, y, w, h = box
-            color = (0, 255, 0) if aligned else (0, 0, 255)
-            cv2.rectangle(frame, (x, y), (x+w, y+h), color, 2)
-            label = f"{obj_class} (ID {track_id}) - {prateleira_atual}"
-            cv2.putText(frame, label, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-        
-        # Desenha as ROIs para visualização
-        for roi in rois:
-            x1, y1, x2, y2 = roi["x1"], roi["y1"], roi["x2"], roi["y2"]
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 255, 0), 2)
-            cv2.putText(frame, f"Prateleira {roi.get('id', '')}", (x1, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,0), 2)
+            # Verifica se algum track ficou sem atualização pelo tempo definido
+            for track in tracks:
+                if not track.is_confirmed():
+                    continue
+                if track.time_since_update >= TIME_SINCE_UPDATE_THRESHOLD:
+                    tid = track.track_id
+                    if tid in estado_objetos:
+                        prateleira_ant, _ = estado_objetos[tid]
+                        inserir_evento(tid, classe_objetos.get(tid, "unknown"), prateleira_ant, "saída")
+                        del estado_objetos[tid]
+                    if tid in classe_objetos:
+                        del classe_objetos[tid]
+                    if tid in ultima_insercao:
+                        del ultima_insercao[tid]
 
-        cv2.imshow("Deteccao com Registro de Eventos", frame)
+            prev_detections = curr_detections.copy()
+
+        # Desenha as detecções persistentes (dos ciclos anteriores) no frame
+        for (box, obj_class, track_id, prateleira) in prev_detections:
+            x, y, w, h = box
+            color = (0, 255, 0)
+            cv2.rectangle(frame, (x, y), (x+w, y+h), color, 2)
+            # Se desejar exibir rótulos, descomente:
+            # cv2.putText(frame, f"{obj_class} (ID {track_id}) - {prateleira}", (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+
+        # Desenha as ROIs
+        for roi in rois:
+            rx1, ry1, rx2, ry2 = roi["x1"], roi["y1"], roi["x2"], roi["y2"]
+            cv2.rectangle(frame, (rx1, ry1), (rx2, ry2), (255,255,0), 2)
+            cv2.putText(frame, f"Prateleira {roi.get('id','')}", (rx1, ry1-5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,0), 2)
+        
+        cv2.imshow("Deteccao e Eventos", frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 

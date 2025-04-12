@@ -19,7 +19,7 @@ net = cv2.dnn.readNet(MODEL_WEIGHTS, MODEL_CONFIG)
 layer_names = net.getLayerNames()
 output_layers = [layer_names[i - 1] for i in net.getUnconnectedOutLayers()]
 
-def detect_objects(frame, confidence_threshold=0.5, nms_threshold=0.4):
+def detect_objects(frame, confidence_threshold=0.7, nms_threshold=0.4):
     height, width, _ = frame.shape
     # Criação do blob
     blob = cv2.dnn.blobFromImage(frame, 0.00392, (416, 416), (0,0,0), True, crop=False)
