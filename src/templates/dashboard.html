@@ -1,163 +1,207 @@
 <!DOCTYPE html>
 <html lang="pt">
 <head>
-    <meta charset="UTF-8">
-    <title>Dashboard de Eventos</title>
-    <!-- Bootstrap CSS -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
-    <!-- Chart.js -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard Inteligente</title>
+  <!-- Bootstrap CSS -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { background: #f5f7fa; }
+    .shelf-card { background: #ffffff; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); cursor: pointer; }
+    .shelf-header { background: #007bff; color: #fff; padding: .5rem; font-weight: 600; text-align: center; }
+    .shelf-body { min-height: 100px; padding: .5rem; display: flex; flex-wrap: wrap; gap: .5rem; }
+    .outside-list { background: #fff; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); padding: 1rem; }
+  </style>
 </head>
 <body>
-    <div class="container mt-4">
-        <h1 class="mb-4">Dashboard de Eventos</h1>
-        
-        <!-- Formulário de Filtro -->
-        <form method="get" action="/" class="row g-3 mb-4">
-            <div class="col-md-3">
-                <label for="data_inicial" class="form-label">Data Inicial</label>
-                <input type="date" class="form-control" id="data_inicial" name="data_inicial" value="{{ data_inicial }}">
-            </div>
-            <div class="col-md-3">
-                <label for="data_final" class="form-label">Data Final</label>
-                <input type="date" class="form-control" id="data_final" name="data_final" value="{{ data_final }}">
-            </div>
-            <div class="col-md-3">
-                <label for="prateleira" class="form-label">Prateleira</label>
-                <input type="text" class="form-control" id="prateleira" name="prateleira" placeholder="Ex: Prateleira 1" value="{{ prateleira_filtro }}">
-            </div>
-            <div class="col-md-3 align-self-end">
-                <button type="submit" class="btn btn-primary">Filtrar</button>
-                <a href="/" class="btn btn-secondary">Limpar Filtros</a>
-            </div>
-        </form>
-        
-        <!-- Resumo -->
-        <div class="alert alert-info">
-            <strong>Total de Eventos Registrados:</strong> {{ total_eventos }}
-        </div>
-        
-        <div class="row">
-            <div class="col-md-6">
-                <h3>Total de Entradas por Prateleira</h3>
-                <canvas id="prateleiraChart"></canvas>
-            </div>
-            <div class="col-md-6">
-                <h3>Eventos por Data</h3>
-                <canvas id="dataChart"></canvas>
-            </div>
-        </div>
-        
-        <!-- Tabela de Eventos Recentes -->
-        <div class="row mt-5">
-            <div class="col">
-                <h3>Eventos Recentes</h3>
-                <table class="table table-striped">
-                    <thead>
-                        <tr>
-                            <th>ID</th>
-                            <th>Objeto</th>
-                            <th>Prateleira</th>
-                            <th>Evento</th>
-                            <th>Timestamp</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for evento in recentes %}
-                        <tr>
-                            <td>{{ evento.track_id }}</td>
-                            <td>{{ evento.objeto }}</td>
-                            <td>{{ evento.prateleira }}</td>
-                            <td>{{ evento.evento }}</td>
-                            <td>{{ evento.timestamp }}</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-        
-        <!-- Botão para Exportar CSV -->
-        <div class="row mb-4">
-            <div class="col">
-                <a href="/export?data_inicial={{ data_inicial }}&data_final={{ data_final }}&prateleira={{ prateleira_filtro }}" class="btn btn-success">Exportar Relatório (CSV)</a>
-            </div>
-        </div>
+  <div class="container py-4">
+    <div class="d-flex justify-content-between align-items-center">
+      <h1 class="mb-4">Dashboard Inteligente de Armazém</h1>
+      <div>
+        <span class="me-2">Olá, {{ user }}!</span>
+        <a href="{{ url_for('logout') }}" class="btn btn-outline-secondary btn-sm">Sair</a>
+      </div>
     </div>
-    
-    <script>
-        // Gráfico de Pizza para Entradas por Prateleira
-        const prateleiraLabels = [
-            {% for row in entradas %}
-            "{{ row.prateleira }}",
-            {% endfor %}
-        ];
-        const prateleiraData = [
-            {% for row in entradas %}
-            {{ row.total_entradas }},
-            {% endfor %}
-        ];
-        const prateleiraCtx = document.getElementById('prateleiraChart').getContext('2d');
-        const prateleiraChart = new Chart(prateleiraCtx, {
-            type: 'pie',
-            data: {
-                labels: prateleiraLabels,
-                datasets: [{
-                    label: 'Entradas por Prateleira',
-                    data: prateleiraData,
-                    backgroundColor: [
-                        'rgba(255, 99, 132, 0.6)',
-                        'rgba(54, 162, 235, 0.6)',
-                        'rgba(255, 206, 86, 0.6)',
-                        'rgba(75, 192, 192, 0.6)',
-                        'rgba(153, 102, 255, 0.6)',
-                        'rgba(255, 159, 64, 0.6)'
-                    ]
-                }]
-            },
-            options: {
-                responsive: true
-            }
-        });
 
-        // Gráfico de Barras para Eventos por Data
-        const dataLabels = [
-            {% for row in eventos %}
-            "{{ row.data }}",
+    <!-- Filtros -->
+    <form method="get" class="row g-3 mb-4 align-items-end">
+      <div class="col-md-2">
+        <label class="form-label">Data Inicial</label>
+        <input type="date" name="data_inicial" class="form-control" value="{{ data_inicial }}">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">Data Final</label>
+        <input type="date" name="data_final" class="form-control" value="{{ data_final }}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Prateleira</label>
+        <select name="prateleira" class="form-select">
+          <option value="">Todas</option>
+          {% for p in shelves %}
+            <option value="Prateleira {{ p.id }}" {% if prateleira_filtro=='Prateleira '+p.id %}selected{% endif %}>
+              Prateleira {{ p.id }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Classe</label>
+        <select name="classe" class="form-select" multiple>
+          {% for cls in all_classes %}
+            <option value="{{ cls }}" {% if cls in classes_filtro %}selected{% endif %}>{{ cls }}</option>
+          {% endfor %}
+        </select>
+        <small class="text-muted">Ctrl+clique para múltiplas</small>
+      </div>
+      <div class="col-md-2 d-grid">
+        <button type="submit" class="btn btn-primary">Aplicar Filtros</button>
+      </div>
+    </form>
+
+    <!-- Prateleiras -->
+    <h2 class="mt-5 mb-3">Visão Geral das Prateleiras</h2>
+    <div class="row gy-4">
+      {% for shelf in shelves %}
+      <div class="col-sm-6 col-md-4 col-lg-3">
+        <div class="shelf-card" data-pratid="{{ shelf.id }}" onclick="openShelfHistory(this)">
+          <div class="shelf-header">Prateleira {{ shelf.id }}</div>
+          <div class="shelf-body">
+            {% for obj in shelf.objects %}
+              <span class="badge bg-success">{{ obj.name }}</span>
             {% endfor %}
-        ];
-        const dataValues = [
-            {% for row in eventos %}
-            {{ row.total_eventos }},
-            {% endfor %}
-        ];
-        const dataCtx = document.getElementById('dataChart').getContext('2d');
-        const dataChart = new Chart(dataCtx, {
-            type: 'bar',
-            data: {
-                labels: dataLabels,
-                datasets: [{
-                    label: 'Eventos por Data',
-                    data: dataValues,
-                    backgroundColor: 'rgba(75, 192, 192, 0.6)',
-                    borderColor: 'rgba(75, 192, 192, 1)',
-                    borderWidth: 1
-                }]
-            },
-            options: {
-                scales: {
-                    y: {
-                        beginAtZero: true,
-                        ticks: {
-                            precision: 0
-                        }
-                    }
-                }
-            }
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <!-- Objetos Fora -->
+    <h2 class="mt-5 mb-3">Objetos Fora das Prateleiras</h2>
+    <div class="outside-list">
+      <ul class="list-group list-group-flush">
+        {% for obj in outside_objects %}
+        <li class="list-group-item d-flex justify-content-between align-items-center">
+          {{ obj.name }}
+          <span class="badge bg-secondary">x={{ obj.pos_x }}, y={{ obj.pos_y }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+
+    <!-- Resumo e Gráficos -->
+    <div class="row mt-5">
+      <div class="col-md-4">
+        <div class="card text-white bg-info mb-3">
+          <div class="card-body">
+            <h5 class="card-title">Total de Eventos</h5>
+            <p class="card-text display-6">{{ total_eventos }}</p>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-4">
+        <canvas id="prateleiraChart"></canvas>
+      </div>
+      <div class="col-md-4">
+        <canvas id="dataChart"></canvas>
+      </div>
+    </div>
+
+    <!-- Eventos Recentes -->
+    <h2 class="mt-5 mb-3">Últimos Eventos</h2>
+    <div class="table-responsive">
+      <table class="table table-hover align-middle">
+        <thead class="table-light">
+          <tr><th>ID</th><th>Objeto</th><th>Prateleira</th><th>Evento</th><th>Hora</th></tr>
+        </thead>
+        <tbody>
+          {% for e in recentes %}
+          <tr>
+            <td>{{ e.track_id }}</td>
+            <td>{{ e.objeto }}</td>
+            <td>{{ e.prateleira }}</td>
+            <td>{{ e.evento }}</td>
+            <td>{{ e.timestamp }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Export CSV -->
+    <div class="d-flex justify-content-end mt-4">
+      <a href="/export?data_inicial={{ data_inicial }}&data_final={{ data_final }}&prateleira={{ prateleira_filtro }}&classe={{ classes_filtro|join(',') }}" class="btn btn-success">
+        <i class="bi bi-download"></i> Exportar CSV
+      </a>
+    </div>
+  </div>
+
+  <!-- Modal de Histórico -->
+  <div class="modal fade" id="historyModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Histórico da Prateleira <span id="modalShelfId"></span></h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <table class="table table-sm">
+            <thead><tr><th>ID</th><th>Objeto</th><th>Evento</th><th>Hora</th></tr></thead>
+            <tbody id="historyBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Gráficos JS -->
+  <script>
+    function openShelfHistory(el) {
+      const id = el.dataset.pratid;
+      document.getElementById('modalShelfId').innerText = id;
+      fetch(`/api/prateleira/${id}/history`)
+        .then(res => res.json())
+        .then(json => {
+          const body = document.getElementById('historyBody');
+          body.innerHTML = '';
+          json.history.forEach(ev => {
+            const row = `<tr>
+              <td>${ev.track_id}</td>
+              <td>${ev.objeto}</td>
+              <td>${ev.evento}</td>
+              <td>${new Date(ev.timestamp).toLocaleString()}</td>
+            </tr>`;
+            body.insertAdjacentHTML('beforeend', row);
+          });
+          new bootstrap.Modal(document.getElementById('historyModal')).show();
         });
-    </script>
-    
-    <!-- Bootstrap JS -->
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    }
+
+    const ctx1 = document.getElementById('prateleiraChart');
+    new Chart(ctx1, {
+      type: 'doughnut',
+      data: {
+        labels: [{% for r in entradas %}'{{ r.prateleira }}',{% endfor %}],
+        datasets: [{ data: [{% for r in entradas %}{{ r.total_entradas }},{% endfor %}] }]
+      }
+    });
+
+    const ctx2 = document.getElementById('dataChart');
+    new Chart(ctx2, {
+      type: 'bar',
+      data: {
+        labels: [{% for r in eventos %}'{{ r.data }}',{% endfor %}],
+        datasets: [{ label: 'Eventos', data: [{% for r in eventos %}{{ r.total_eventos }},{% endfor %}], backgroundColor: '#198754' }]
+      },
+      options: { scales:{ y:{ beginAtZero:true } } }
+    });
+  </script>
+
+  <!-- Bootstrap JS -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <!-- Bootstrap Icons -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
 </body>
 </html>
