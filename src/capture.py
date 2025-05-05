@@ -8,82 +8,43 @@ from db import criar_tabela, inserir_deteccao, inserir_evento
 from deep_sort_realtime.deepsort_tracker import DeepSort
 
 # --- CONFIGURAÇÕES ---
-allowed_classes = ["sports ball", "tennis racket"]
-tracker = DeepSort(
-    max_age=2,      # descarta tracks ausentes rapidamente
-    n_init=3,
-    nn_budget=100,
-    override_track_class=None,
-    embedder="mobilenet"
-)
-detection_interval = 5.0  # segundos entre detecções
-MISSING_THRESHOLD = 2      # ciclos sem detecção para saída de evento
+allowed_classes    = ["sports ball", "tennis racket"]
+tracker            = DeepSort(max_age=2, n_init=3, nn_budget=100, override_track_class=None, embedder="mobilenet")
+detection_interval = 5.0      # segundos entre detecções
+MISSING_THRESHOLD  = 2        # ciclos sem detecção para saída
 
-# --- MAPEAMENTO INTERNAL -> APP ID ---
-# Cada internal track_id mapeia para um my_id único e persistente
-# Removeremos o mapping apenas quando my_id for encerrado
-# (i.e., saída definitiva)
-dsort2app = {}   # internal_id -> {'my_id': int, 'last_box': tuple}
+# Mapeamento interno → nosso ID persistente
+dsort2app = {}
 next_my_id = 1
 
-# --- AUXILIARES ---
-def compute_iou(box1, box2):
-    x1,y1,w1,h1 = box1
-    x2,y2,w2,h2 = box2
-    xa = max(x1,x2)
-    ya = max(y1,y2)
-    xb = min(x1+w1, x2+w2)
-    yb = min(y1+h1, y2+h2)
-    iw = max(0, xb-xa)
-    ih = max(0, yb-ya)
-    inter = iw * ih
-    union = w1*h1 + w2*h2 - inter
-    return inter/union if union>0 else 0.0
+# Estados e ocupação de prateleiras
+estado          = {}  # mid -> última bbox
+classe          = {}  # mid -> classe fixa
+ultima_ins      = {}  # mid -> timestamp da última inserção
+missing         = {}  # mid -> contagem de frames ausentes
+shelf_occupancy = {}  # "Prateleira N" -> mid atualmente dentro
 
-# associação de detecção YOLO ao track do Deep SORT
-def associate_detection_with_track(track_box, detections, allowed_class=None):
-    tx = (track_box[0] + track_box[2]) / 2
-    ty = (track_box[1] + track_box[3]) / 2
-    best, bd = None, float('inf')
-    for det in detections:
-        if allowed_class and det['class'] != allowed_class:
-            continue
-        x,y,w,h = det['box']
-        cx,cy = x + w/2, y + h/2
-        d = ((tx-cx)**2 + (ty-cy)**2)**0.5
-        if d < bd:
-            bd, best = d, det
-    return best
+def compute_iou(a, b):
+    xA = max(a[0], b[0]); yA = max(a[1], b[1])
+    xB = min(a[0]+a[2], b[0]+b[2]); yB = min(a[1]+a[3], b[1]+b[3])
+    interW = max(0, xB-xA); interH = max(0, yB-yA)
+    inter  = interW*interH
+    union  = a[2]*a[3] + b[2]*b[3] - inter
+    return inter/union if union>0 else 0
 
-# detecta mudança significativa de estado
-def state_changed(prev_state, curr_state, iou_thresh=0.96, pixel_tol=20):
-    prev_prat, prev_box = prev_state
-    curr_prat, curr_box = curr_state
-    if prev_prat != curr_prat:
-        return True
-    iou = compute_iou(prev_box, curr_box)
-    if iou >= iou_thresh:
-        return False
-    diffs = [abs(a-b) for a,b in zip(prev_box, curr_box)]
-    return not all(d<=pixel_tol for d in diffs)
+def state_changed(old_box, new_box, iou_thresh=0.96):
+    return compute_iou(old_box, new_box) < iou_thresh
 
-# atribuição de prateleira com histerese
-def determinar_prateleira(center, rois, anterior=None, tol=40):
+def determinar_prateleira(center, rois):
     x,y = center
-    if anterior:
-        for r in rois:
-            if f"Prateleira {r['id']}" == anterior:
-                if r['x1']-tol<=x<=r['x2']+tol and r['y1']-tol<=y<=r['y2']+tol:
-                    return anterior
-                break
     for r in rois:
-        if r['x1']<=x<=r['x2'] and r['y1']<=y<=r['y2']:
+        if r['x1'] <= x <= r['x2'] and r['y1'] <= y <= r['y2']:
             return f"Prateleira {r['id']}"
     return "Fora da prateleira"
 
-# fluxo principal
 def main():
     global next_my_id
+
     criar_tabela()
     rois = carregar_rois("data/annotations/rois_live.json")
     if not rois:
@@ -96,126 +57,120 @@ def main():
         return
 
     last_time = time.time()
-    estado = {}    # my_id -> (prateleira, box)
-    classe = {}    # my_id -> classe
-    ultima = {}    # my_id -> (prateleira, box)
-    missing = {}   # my_id -> ciclos sem detecção
-    prev_draw = []
+    prev_draw = []  # <-- inicializado antes do loop
 
     while True:
         ret, frame = cap.read()
         if not ret:
             break
+
         now = time.time()
-
         if now - last_time >= detection_interval:
+            # 1) detecta objetos e tracks
             pre = preprocess_for_shelf_detection(frame)
-            detect_shelf_lines(pre)
+            _   = detect_shelf_lines(pre)
             objs = [o for o in detect_objects(frame) if o['class'] in allowed_classes]
-
-            dets = [([x,y,x+w,y+h], o['confidence'])
-                    for o in objs for x,y,w,h in [o['box']]]
+            dets = [([x,y,x+w,y+h], o['confidence']) for o in objs for x,y,w,h in [o['box']]]
             tracks = tracker.update_tracks(dets, frame=frame)
 
             current_mids = set()
-            curr_draw = []
+            curr_draw    = []
 
-            # processa cada track ativo
+            # 2) processa cada track confirmado
             for t in tracks:
                 if not t.is_confirmed():
                     continue
                 iid = t.track_id
-                box_int = tuple(map(int, t.to_ltrb()))
+                x1,y1,x2,y2 = map(int, t.to_ltrb())
+                w, h = x2-x1, y2-y1
 
-                # mapeia internal_id para meu my_id
+                # atribui nosso ID
                 if iid not in dsort2app:
-                    dsort2app[iid] = {'my_id': next_my_id, 'last_box': box_int}
+                    dsort2app[iid] = next_my_id
                     next_my_id += 1
-                mid = dsort2app[iid]['my_id']
-                dsort2app[iid]['last_box'] = box_int
-
+                mid = dsort2app[iid]
                 current_mids.add(mid)
                 missing[mid] = 0
 
-                det = associate_detection_with_track(box_int, objs, classe.get(mid))
-                if not det:
+                # associa detecção YOLO mais próxima
+                best = None; bd = float('inf')
+                tx,ty = (x1+x2)/2, (y1+y2)/2
+                for o in objs:
+                    bx,by,bw,bh = o['box']
+                    cx,cy = bx + bw/2, by + bh/2
+                    d = np.hypot(tx-cx, ty-cy)
+                    if d < bd:
+                        bd,best = d,o
+                if best is None:
                     continue
-                x,y,w,h = det['box']
-                cls = det['class']
 
+                cls = best['class']
+                bx,by,bw,bh = best['box']
+
+                # fixa classe
                 if mid not in classe:
                     classe[mid] = cls
                 elif classe[mid] != cls:
-                    # força saída da classe anterior e apaga estado
-                    prat_old,_ = estado.get(mid, ("Desconhecida",()))
-                    inserir_evento(mid, classe[mid], prat_old, "saída")
-                    estado.pop(mid, None)
-                    classe.pop(mid, None)
-                    ultima.pop(mid, None)
-                    missing.pop(mid, None)
-                    continue
+                    continue  # ignora troca de classe inesperada
 
-                adj = [x,y,w,h]
-                center = (x + w/2, y + h/2)
-                prat_prev = estado.get(mid, (None,))[0]
-                prat_cur = determinar_prateleira(center, rois, prat_prev)
+                # determina prateleira
+                center = (bx + bw/2, by + bh/2)
+                prat = determinar_prateleira(center, rois)
 
-                new_state = (prat_cur, tuple(adj))
-                old_state = estado.get(mid)
+                # registro de ENTRADA (só se prateleira estiver livre)
+                if mid not in estado and prat != "Fora da prateleira":
+                    if prat not in shelf_occupancy:
+                        inserir_evento(mid, cls, prat, "entrada")
+                        shelf_occupancy[prat] = mid
 
-                if not old_state:
-                    # entrada
-                    if prat_cur != "Fora da prateleira":
-                        inserir_evento(mid, cls, prat_cur, "entrada")
-                    else:
-                        inserir_evento(mid, cls, "Fora da prateleira", "não identificado")
-                    inserir_deteccao(cls, mid, adj, True, None)
-                    estado[mid] = new_state
-                    ultima[mid] = new_state
-                else:
-                    if state_changed(old_state, new_state):
-                        if old_state[0] != prat_cur:
-                            if old_state[0] != "Fora da prateleira":
-                                inserir_evento(mid, cls, old_state[0], "saída")
-                            if prat_cur != "Fora da prateleira":
-                                inserir_evento(mid, cls, prat_cur, "entrada")
-                        if old_state[1] != tuple(adj):
-                            inserir_deteccao(cls, mid, adj, True, None)
-                        estado[mid] = new_state
-                        ultima[mid] = new_state
+                # atualiza estado
+                old_box = estado.get(mid)
+                new_box = (bx,by,bw,bh)
+                if old_box is None or state_changed(old_box, new_box):
+                    estado[mid] = new_box
+                    ultima_ins[mid] = now
 
-                curr_draw.append((adj, cls, mid, prat_cur))
+                curr_draw.append((bx,by,bw,bh,cls,mid,prat))
 
             last_time = now
 
-            # dispara saída por ausência e limpa mapping de my_id
+            # 3) dispara saída por ausência
             for mid in list(estado):
                 if mid not in current_mids:
-                    missing[mid] = missing.get(mid, 0) + 1
+                    missing[mid] = missing.get(mid,0) + 1
                     if missing[mid] >= MISSING_THRESHOLD:
-                        prat_old,_ = estado.pop(mid)
-                        inserir_evento(mid, classe.pop(mid, "unknown"), prat_old, "saída")
-                        ultima.pop(mid, None)
+                        # encontra e libera prateleira
+                        prat = next((p for p,m in shelf_occupancy.items() if m==mid), None)
+                        if prat:
+                            inserir_evento(mid, classe.get(mid,"unknown"), prat, "saída")
+                            shelf_occupancy.pop(prat, None)
+                        # limpa estados
+                        estado.pop(mid, None)
+                        classe.pop(mid, None)
+                        ultima_ins.pop(mid, None)
                         missing.pop(mid, None)
-                        # limpa qualquer internal_id mapeado para este mid
-                        for iid,info in list(dsort2app.items()):
-                            if info['my_id'] == mid:
-                                dsort2app.pop(iid, None)
 
             prev_draw = curr_draw
 
-        # desenha os retângulos persistentes
-        for b,cls,mid,prat in prev_draw:
-            x,y,w,h = b
-            cv2.rectangle(frame, (x,y), (x+w,y+h), (0,255,0), 2)
+        # 4) desenha as caixas persistentes
+        for bx,by,bw,bh,cls,mid,prat in prev_draw:
+            cv2.rectangle(frame, (int(bx),int(by)), (int(bx+bw),int(by+bh)), (0,255,0), 2)
+            cv2.putText(frame, f"{cls} (ID {mid})",
+                        (int(bx), int(by)-10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 1)
 
-        # desenha ROIs
+        # 5) desenha ROIs
         for r in rois:
-            cv2.rectangle(frame, (r['x1'],r['y1']), (r['x2'],r['y2']), (255,255,0), 2)
-            cv2.putText(frame, f"Prateleira {r['id']}", (r['x1'],r['y1']-5),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,0), 2)
+            cv2.rectangle(frame,
+                          (r['x1'],r['y1']),
+                          (r['x2'],r['y2']),
+                          (255,255,0), 2)
+            cv2.putText(frame,
+                        f"Prateleira {r['id']}",
+                        (r['x1'], r['y1']-5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,0), 1)
 
-        cv2.imshow("Deteccao e Eventos", frame)
+        cv2.imshow("Detecção e Eventos", frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 

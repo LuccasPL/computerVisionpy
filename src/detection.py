@@ -1,75 +1,82 @@
-# src/detection.py
-
+# src/detection.py  (atualizado)
 import cv2
 import numpy as np
+import os
 
-# Caminho para os arquivos do modelo
-MODEL_CONFIG = "models\yolov3.cfg"
-MODEL_WEIGHTS = "models\yolov3.weights"
-CLASSES_FILE = "models\coco.names"
+# caminhos do seu modelo
+MODEL_CONFIG  = os.path.join("models", "yolov3.cfg")
+MODEL_WEIGHTS = os.path.join("models", "yolov3.weights")
+CLASSES_FILE  = os.path.join("models", "coco.names")
 
-# Carregar os nomes das classes
+# carrega nomes
 with open(CLASSES_FILE, "r") as f:
-    classes = [line.strip() for line in f.readlines()]
+    classes = [l.strip() for l in f]
 
-# Carregar o modelo YOLO com OpenCV DNN
+# carrega a rede
 net = cv2.dnn.readNet(MODEL_WEIGHTS, MODEL_CONFIG)
 
-# Obter os nomes das camadas de saída
-layer_names = net.getLayerNames()
+# força CPU (evita erros de CUDA)
+net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+
+# obtém nomes das camadas de saída
+layer_names   = net.getLayerNames()
 output_layers = [layer_names[i - 1] for i in net.getUnconnectedOutLayers()]
 
-def detect_objects(frame, confidence_threshold=0.7, nms_threshold=0.4):
-    height, width, _ = frame.shape
-    # Criação do blob
-    blob = cv2.dnn.blobFromImage(frame, 0.00392, (416, 416), (0,0,0), True, crop=False)
+def detect_objects(frame,
+                   confidence_threshold=0.3,   # abaixado de 0.5
+                   nms_threshold=0.4,
+                   inp_size=(608, 608)):       # aumentado de (416,416)
+    """
+    Retorna lista de detecções no formato:
+      { 'class': str, 'confidence': float, 'box': [x,y,w,h] }
+    """
+    h, w = frame.shape[:2]
+
+    # cria blob maior
+    blob = cv2.dnn.blobFromImage(frame, 1/255.0, inp_size,
+                                 swapRB=True, crop=False)
     net.setInput(blob)
     outs = net.forward(output_layers)
 
-    class_ids = []
-    confidences = []
-    boxes = []
-    
-    # Processa cada detecção
+    boxes, confidences, class_ids = [], [], []
     for out in outs:
-        for detection in out:
-            scores = detection[5:]
-            class_id = np.argmax(scores)
-            confidence = scores[class_id]
-            if confidence > confidence_threshold:
-                center_x = int(detection[0] * width)
-                center_y = int(detection[1] * height)
-                w = int(detection[2] * width)
-                h = int(detection[3] * height)
-                x = int(center_x - w / 2)
-                y = int(center_y - h / 2)
-                boxes.append([x, y, w, h])
-                confidences.append(float(confidence))
-                class_ids.append(class_id)
-    
-    # Supressão não máxima para remover sobreposições
-    indexes = cv2.dnn.NMSBoxes(boxes, confidences, confidence_threshold, nms_threshold)
+        for det in out:
+            scores = det[5:]
+            cid    = np.argmax(scores)
+            conf   = float(scores[cid])
+            if conf > confidence_threshold:
+                cx, cy = int(det[0] * w), int(det[1] * h)
+                bw, bh = int(det[2] * w), int(det[3] * h)
+                x = cx - bw//2
+                y = cy - bh//2
+                boxes.append([x, y, bw, bh])
+                confidences.append(conf)
+                class_ids.append(cid)
+
+    # aplica Non‑Maxima Suppression
+    idxs = cv2.dnn.NMSBoxes(boxes, confidences,
+                            confidence_threshold, nms_threshold)
+
     detections = []
-    for i in indexes:
-        i = i[0] if isinstance(i, (list, tuple, np.ndarray)) else i
-        box = boxes[i]
-        detections.append({
-            "class": classes[class_ids[i]],
-            "confidence": confidences[i],
-            "box": box
-        })
+    if len(idxs) > 0:
+        for i in idxs.flatten():
+            detections.append({
+                "class": classes[class_ids[i]],
+                "confidence": confidences[i],
+                "box": boxes[i]
+            })
     return detections
 
 if __name__ == "__main__":
-    # Teste com uma imagem
+    # teste rápido
     img = cv2.imread("data/raw/img_009.jpg")
-    results = detect_objects(img)
-    for det in results:
-        x, y, w, h = det["box"]
-        label = det["class"]
-        confidence = det["confidence"]
-        cv2.rectangle(img, (x, y), (x+w, y+h), (0,255,0), 2)
-        cv2.putText(img, f"{label} {confidence:.2f}", (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 2)
-    cv2.imshow("Detecções", img)
+    dets = detect_objects(img)
+    for d in dets:
+        x,y,w,h = d["box"]
+        cv2.rectangle(img, (x,y),(x+w,y+h),(0,255,0),2)
+        cv2.putText(img, f"{d['class']}:{d['confidence']:.2f}",
+                    (x,y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5,(0,255,0),1)
+    cv2.imshow("Teste", img)
     cv2.waitKey(0)
     cv2.destroyAllWindows()

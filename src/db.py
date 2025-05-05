@@ -1,16 +1,16 @@
+# src/db.py
 import mysql.connector
 from mysql.connector import Error
+import json
 
-# Configurações para conectar ao MySQL
 DB_CONFIG = {
-    'host': 'localhost',       
-    'user': 'root',      
-    'password': '78517231Le!',    
-    'database': 'deteccoes_db'  
+    'host': 'localhost',
+    'user': 'root',
+    'password': '78517231Le!',
+    'database': 'deteccoes_db'
 }
 
 def criar_conexao():
-    """Cria e retorna uma conexão com o banco de dados MySQL."""
     try:
         conn = mysql.connector.connect(**DB_CONFIG)
         if conn.is_connected():
@@ -20,81 +20,90 @@ def criar_conexao():
     return None
 
 def criar_tabela():
-    """Cria a tabela de detecções se ela não existir."""
     conn = criar_conexao()
-    if conn is None:
+    if not conn:
         print("Erro: conexão não estabelecida!")
         return
     cursor = conn.cursor()
-    create_table_query = """
+    # Cria tabela Detecoes (sem extra_features)
+    cursor.execute("""
     CREATE TABLE IF NOT EXISTS Detecoes (
         id INT AUTO_INCREMENT PRIMARY KEY,
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
         objeto VARCHAR(255),
-        x INT,
-        y INT,
-        w INT,
-        h INT,
+        track_id INT,
+        x INT, y INT, w INT, h INT,
         alinhado BOOLEAN,
         line_y FLOAT
     );
-    """
-    try:
-        cursor.execute(create_table_query)
-        conn.commit()
-        print("Tabela 'Detecoes' criada com sucesso (ou já existe).")
-    except Error as e:
-        print(f"Erro ao criar a tabela: {e}")
-    finally:
-        cursor.close()
-        conn.close()
+    """)
+    conn.commit()
 
-def inserir_deteccao(objeto, track_id, box, alinhado, line_y):
+    # Verifica se a coluna extra_features já existe
+    cursor.execute("""
+        SELECT COUNT(*) 
+          FROM information_schema.columns
+         WHERE table_schema = %s
+           AND table_name = 'Detecoes'
+           AND column_name = 'extra_features';
+    """, (DB_CONFIG['database'],))
+    count = cursor.fetchone()[0]
+    if count == 0:
+        try:
+            cursor.execute("ALTER TABLE Detecoes ADD COLUMN extra_features JSON;")
+            conn.commit()
+            print("Coluna 'extra_features' adicionada com sucesso.")
+        except Error as e:
+            print(f"Erro ao adicionar coluna extra_features: {e}")
+
+    cursor.close()
+    conn.close()
+
+def inserir_deteccao(objeto, track_id, box, alinhado, line_y, extra_features=None):
     x, y, w, h = box
     conn = criar_conexao()
-    if conn is None:
+    if not conn:
         print("Erro: conexão não estabelecida!")
         return
     cursor = conn.cursor()
-    insert_query = """
-        INSERT INTO Detecoes (objeto, track_id, x, y, w, h, alinhado, line_y)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+    insert = """
+    INSERT INTO Detecoes
+      (objeto, track_id, x, y, w, h, alinhado, line_y, extra_features)
+    VALUES
+      (%s, %s, %s, %s, %s, %s, %s, %s, %s)
     """
-    data = (objeto, track_id, x, y, w, h, alinhado, line_y if line_y is not None else 0)
+    data = (
+        objeto, track_id, x, y, w, h,
+        alinhado, line_y if line_y is not None else 0,
+        json.dumps(extra_features) if extra_features is not None else None
+    )
     try:
-        cursor.execute(insert_query, data)
+        cursor.execute(insert, data)
         conn.commit()
-        print(f"Detecção inserida: {objeto} (ID {track_id}) em ({x}, {y}, {w}, {h}) | Alinhado: {alinhado}")
     except Error as e:
-        print(f"Erro ao inserir a detecção: {e}")
+        print(f"Erro ao inserir detecção: {e}")
     finally:
         cursor.close()
         conn.close()
 
 def inserir_evento(track_id, objeto, prateleira, evento):
-    """Insere um evento (entrada, saída, troca) no banco de dados."""
     conn = criar_conexao()
-    if conn is None:
+    if not conn:
         print("Erro: conexão não estabelecida!")
         return
     cursor = conn.cursor()
-    insert_query = """
-        INSERT INTO Eventos (track_id, objeto, prateleira, evento)
-        VALUES (%s, %s, %s, %s)
+    insert = """
+      INSERT INTO Eventos (track_id, objeto, prateleira, evento)
+      VALUES (%s, %s, %s, %s)
     """
-    data = (track_id, objeto, prateleira, evento)
     try:
-        cursor.execute(insert_query, data)
+        cursor.execute(insert, (track_id, objeto, prateleira, evento))
         conn.commit()
-        print(f"Evento inserido: Objeto '{objeto}' (ID {track_id}) - {evento} na prateleira {prateleira}")
-    except Exception as e:
-        print(f"Erro ao inserir o evento: {e}")
+    except Error as e:
+        print(f"Erro ao inserir evento: {e}")
     finally:
         cursor.close()
         conn.close()
 
-
 if __name__ == "__main__":
     criar_tabela()
-    # Teste de inserção:
-    inserir_deteccao("person", 1, [100, 150, 50, 60], True, 200)
