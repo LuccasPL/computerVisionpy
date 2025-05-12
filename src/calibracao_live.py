@@ -1,77 +1,77 @@
-# src/calibracao_live.py
-
 import cv2
 import json
 import os
 
-# Variáveis globais
+# Globals
 roi_points = []
 rois = []
-image = None  # Declaração global da variável image
+image = None      # the captured calibration frame
 
 def select_roi(event, x, y, flags, param):
-    global roi_points, rois, image  # Garante que usaremos a variável global 'image'
+    global roi_points, rois, image
     if event == cv2.EVENT_LBUTTONDOWN:
         roi_points = [(x, y)]
     elif event == cv2.EVENT_LBUTTONUP:
         roi_points.append((x, y))
-        # Verifica se 'image' está definida e possui tamanho válido antes de desenhar
-        if image is not None and image.size != 0:
+        if image is not None and image.size:
             cv2.rectangle(image, roi_points[0], roi_points[1], (0, 255, 0), 1)
         rois.append(roi_points.copy())
-        roi_points = []
+        roi_points.clear()
 
 def main():
-    global image, rois  # Declaramos que vamos usar as variáveis globais 'image' e 'rois'
-    
+    global image, rois
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         print("Erro ao acessar a webcam.")
         return
 
-    print("Ajuste a câmera. Quando estiver pronto, pressione 'c' para capturar a imagem para calibração.")
+    print("Ajuste a câmera. Quando estiver pronto, pressione 'c' para capturar o frame para calibração.")
     while True:
         ret, frame = cap.read()
         if not ret:
             continue
         cv2.imshow("Calibração de Prateleiras - Live", frame)
-        key = cv2.waitKey(1) & 0xFF
-        if key == ord('c'):
-            image = frame.copy()  # Captura a imagem e a guarda na variável global 'image'
+        if cv2.waitKey(1) & 0xFF == ord('c'):
+            image = frame.copy()
             break
 
     cap.release()
+    cv2.destroyWindow("Calibração de Prateleiras - Live")
 
-    # Cria uma janela nomeada e define o callback para capturar os ROIs
+    # save the calibration image for reuse
+    os.makedirs("data/annotations", exist_ok=True)
+    cv2.imwrite("data/annotations/calibration_frame.jpg", image)
+
+    # now draw shelf ROIs
     cv2.namedWindow("Calibração de Prateleiras - Live")
     cv2.setMouseCallback("Calibração de Prateleiras - Live", select_roi)
-    print("Agora, desenhe as regiões de interesse (prateleiras) na imagem capturada.")
-    print("Pressione 'r' para reiniciar a seleção ou 'c' para confirmar e salvar.")
+    print("Desenhe as prateleiras na imagem capturada.")
+    print("Pressione 'r' para reiniciar, 'c' para confirmar e salvar.")
 
-    # Loop para exibir a imagem e permitir a seleção dos ROIs
     while True:
         cv2.imshow("Calibração de Prateleiras - Live", image)
         key = cv2.waitKey(1) & 0xFF
         if key == ord('r'):
-            # Se o usuário desejar reiniciar, recarregamos a imagem original
-            image = frame.copy()
-            rois = []
+            image = cv2.imread("data/annotations/calibration_frame.jpg").copy()
+            rois.clear()
             print("Seleção reiniciada.")
         elif key == ord('c'):
             break
 
     cv2.destroyAllWindows()
 
-    # Salva as ROIs em um arquivo JSON
+    # serialize shelf ROIs
     rois_data = []
-    for index, roi in enumerate(rois, start=1):
-        roi_dict = {"id": index, "x1": roi[0][0], "y1": roi[0][1], "x2": roi[1][0], "y2": roi[1][1]}
-        rois_data.append(roi_dict)
+    for idx, roi in enumerate(rois, start=1):
+        x1,y1 = roi[0]
+        x2,y2 = roi[1]
+        rois_data.append({"id": idx, "x1": x1, "y1": y1, "x2": x2, "y2": y2})
 
-    os.makedirs("data/annotations/", exist_ok=True)
     with open("data/annotations/rois_live.json", "w") as f:
         json.dump(rois_data, f, indent=4)
-    print("ROIs salvas em 'data/annotations/rois_live.json'.")
 
-if __name__ == '__main__':
+    print(f"{len(rois_data)} prateleiras salvas em 'data/annotations/rois_live.json'.")
+    print("Imagem de calibração salva em 'data/annotations/calibration_frame.jpg'.")
+
+if __name__ == "__main__":
     main()
