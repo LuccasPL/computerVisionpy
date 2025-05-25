@@ -24,9 +24,9 @@ layer_names   = net.getLayerNames()
 output_layers = [layer_names[i - 1] for i in net.getUnconnectedOutLayers()]
 
 def detect_objects(frame,
-                   confidence_threshold=0.3,   # abaixado de 0.5
+                   confidence_threshold=0.2,   # abaixado de 0.5
                    nms_threshold=0.4,
-                   inp_size=(608, 608)):       # aumentado de (416,416)
+                   inp_size=(416, 416)):       # aumentado de (416,416)
     """
     Retorna lista de detecções no formato:
       { 'class': str, 'confidence': float, 'box': [x,y,w,h] }
@@ -46,13 +46,18 @@ def detect_objects(frame,
             cid    = np.argmax(scores)
             conf   = float(scores[cid])
             if conf > confidence_threshold:
-                cx, cy = int(det[0] * w), int(det[1] * h)
-                bw, bh = int(det[2] * w), int(det[3] * h)
-                x = cx - bw//2
-                y = cy - bh//2
-                boxes.append([x, y, bw, bh])
-                confidences.append(conf)
-                class_ids.append(cid)
+                cls_name = classes[cid]
+                thresh = confidence_threshold
+                if cls_name == "sports ball":
+                    thresh = 0.20
+                if conf > thresh:
+                    cx, cy = int(det[0] * w), int(det[1] * h)
+                    bw, bh = int(det[2] * w), int(det[3] * h)
+                    x = cx - bw//2
+                    y = cy - bh//2
+                    boxes.append([x, y, bw, bh])
+                    confidences.append(conf)
+                    class_ids.append(cid)
 
     # aplica Non‑Maxima Suppression
     idxs = cv2.dnn.NMSBoxes(boxes, confidences,
