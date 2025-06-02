@@ -18,7 +18,7 @@ def select_prateleira(event, x, y, flags, param):
 
 def main():
     global image, prateleiras
-    cap = cv2.VideoCapture(1)
+    cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         print("Erro ao acessar a webcam.")
         return

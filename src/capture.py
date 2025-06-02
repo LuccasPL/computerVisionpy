@@ -11,7 +11,7 @@ from db import criar_tabelas, inserir_deteccao, inserir_evento
 from deep_sort_realtime.deepsort_tracker import DeepSort
 
 # — CONFIGURAÇÕES —
-allowed_classes    = ["sports ball", "tennis racket"]
+allowed_classes    = ["sports ball", "tennis racket","vase"]
 tracker            = DeepSort(max_age=2, n_init=3, nn_budget=100,
                              override_track_class=None, embedder="mobilenet")
 DETECTION_INTERVAL = 5.0   # segundos
@@ -54,7 +54,7 @@ def main():
         print("Calibre prateleiras e posições primeiro.")
         return
 
-    cap = cv2.VideoCapture(1)
+    cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         print("Falha ao abrir webcam.")
         return

@@ -3,23 +3,32 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Dashboard Inteligente</title>
+  <title>Dashboard Inteligente da ArmazémTec</title>
+
   <!-- Bootstrap CSS -->
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
   <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- Bootstrap Icons -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
+
   <style>
     body { background: #f5f7fa; }
     .shelf-card { background: #ffffff; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); cursor: pointer; }
-    .shelf-header { background: #007bff; color: #fff; padding: .5rem; font-weight: 600; text-align: center; }
+    .shelf-header { background: #007bff; color: #fff; padding: .5rem; font-weight: 600; text-align: center; display: flex; justify-content: space-between; align-items: center; border-top-left-radius: 12px; border-top-right-radius: 12px; }
     .shelf-body { min-height: 100px; padding: .5rem; display: flex; flex-wrap: wrap; gap: .5rem; }
     .outside-list { background: #fff; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); padding: 1rem; }
+    #cameraContainer { position: relative; }
+    #cameraSpinner { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); }
+
+    /* Opcional: melhora a distância entre botões no filtro */
+    .filter-buttons { display: flex; gap: 0.5rem; }
   </style>
 </head>
 <body>
   <div class="container py-4">
     <div class="d-flex justify-content-between align-items-center">
-      <h1 class="mb-4">Dashboard Inteligente de Armazém</h1>
+      <h1 class="mb-4">Dashboard Inteligente da ArmazémTec</h1>
       <div>
         <span class="me-2">Olá, {{ user }}!</span>
         <a href="{{ url_for('logout') }}" class="btn btn-outline-secondary btn-sm">Sair</a>
@@ -41,7 +50,8 @@
         <select name="prateleira" class="form-select">
           <option value="">Todas</option>
           {% for p in shelves %}
-            <option value="Prateleira {{ p.id }}" {% if prateleira_filtro=='Prateleira '+p.id %}selected{% endif %}>
+            <option value="Prateleira {{ p.id }}"
+              {% if prateleira_filtro == ('Prateleira ' ~ p.id) %}selected{% endif %}>
               Prateleira {{ p.id }}
             </option>
           {% endfor %}
@@ -56,42 +66,94 @@
         </select>
         <small class="text-muted">Ctrl+clique para múltiplas</small>
       </div>
-      <div class="col-md-2 d-grid">
-        <button type="submit" class="btn btn-primary">Aplicar Filtros</button>
+      <div class="col-md-2">
+        <div class="filter-buttons">
+          <button type="submit" class="btn btn-primary">Aplicar Filtros</button>
+          <button type="button" id="resetButton" class="btn btn-warning">Zerar Visão</button>
+          <button type="button" id="resumeButton" class="btn btn-success">Retomar Visão</button>
+        </div>
       </div>
     </form>
 
-    <!-- Prateleiras -->
-    <h2 class="mt-5 mb-3">Visão Geral das Prateleiras</h2>
-    <div class="row gy-4">
+    <!-- -------------------------------------------------------------- -->
+    <!--  VISÃO DA CÂMERA (LIVE FEED)                                   -->
+    <!-- -------------------------------------------------------------- -->
+    <h2 class="mt-5 mb-3">Visão do Armazém em Tempo Real</h2>
+    <div class="row mb-5">
+      <div class="col-12 text-center" id="cameraContainer">
+        <div id="cameraSpinner" class="spinner-border text-primary" role="status">
+          <span class="visually-hidden">Carregando...</span>
+        </div>
+        <img
+          id="cameraFeed"
+          src="{{ url_for('video_feed') }}"
+          class="img-fluid rounded"
+          style="display:none;"
+          alt="Live Camera Feed">
+      </div>
+    </div>
+
+    <!-- -------------------------------------------------------------- -->
+    <!--   PRATELEIRAS (E POSIÇÕES)                                     -->
+    <!-- -------------------------------------------------------------- -->
+    <h2 class="mt-5 mb-3">Visão Geral das Prateleiras (e Posições)</h2>
+    {% if shelves|length == 0 %}
+      <div class="alert alert-info">Não há prateleiras com eventos recentes (últimas 24h).</div>
+    {% endif %}
+    <div class="row gy-4" id="shelvesContainer">
       {% for shelf in shelves %}
-      <div class="col-sm-6 col-md-4 col-lg-3">
+      <div class="col-12 col-sm-6 col-md-4 col-lg-3 mb-3 shelf-col">
         <div class="shelf-card" data-pratid="{{ shelf.id }}" onclick="openShelfHistory(this)">
-          <div class="shelf-header">Prateleira {{ shelf.id }}</div>
+          <div class="shelf-header">
+            <span>Prateleira {{ shelf.id }}</span>
+            <span class="badge bg-light text-dark occupancy-badge">{{ shelf.objects|length }} ocupadas</span>
+          </div>
           <div class="shelf-body">
-            {% for obj in shelf.objects %}
-              <span class="badge bg-success">{{ obj.name }}</span>
-            {% endfor %}
+            {% if shelf.objects %}
+              {% for obj in shelf.objects %}
+                <span class="badge bg-success">
+                  <i class="bi bi-box-seam"></i> {{ obj.name }}<br>
+                  <small>Posição {{ obj.position }}</small>
+                </span>
+              {% endfor %}
+            {% else %}
+              <span class="text-muted">Sem objetos</span>
+            {% endif %}
           </div>
         </div>
       </div>
       {% endfor %}
     </div>
 
-    <!-- Objetos Fora -->
+    <!-- -------------------------------------------------------------- -->
+    <!--   OBJETOS FORA                                                 -->
+    <!-- -------------------------------------------------------------- -->
     <h2 class="mt-5 mb-3">Objetos Fora das Prateleiras</h2>
-    <div class="outside-list">
-      <ul class="list-group list-group-flush">
+    <div class="outside-list mb-3">
+      <div class="mb-2">
+        <input id="searchOutside" class="form-control form-control-sm" placeholder="Buscar objeto..." onkeyup="filterOutside()">
+      </div>
+      <ul class="list-group list-group-flush" id="outsideList">
         {% for obj in outside_objects %}
-        <li class="list-group-item d-flex justify-content-between align-items-center">
-          {{ obj.name }}
+        <li class="list-group-item d-flex justify-content-between align-items-center outside-item">
+          <div>
+            <i class="bi bi-file-earmark-excel"></i> {{ obj.name }}
+            {% if obj.position %}
+              <small class="text-muted">(Última: {{ obj.position }})</small>
+            {% endif %}
+          </div>
           <span class="badge bg-secondary">x={{ obj.pos_x }}, y={{ obj.pos_y }}</span>
         </li>
         {% endfor %}
+        {% if outside_objects|length == 0 %}
+          <li class="list-group-item text-muted outside-item">Nenhum objeto fora.</li>
+        {% endif %}
       </ul>
     </div>
 
-    <!-- Resumo e Gráficos -->
+    <!-- -------------------------------------------------------------- -->
+    <!--   RESUMO E GRÁFICOS                                            -->
+    <!-- -------------------------------------------------------------- -->
     <div class="row mt-5">
       <div class="col-md-4">
         <div class="card text-white bg-info mb-3">
@@ -109,12 +171,21 @@
       </div>
     </div>
 
-    <!-- Eventos Recentes -->
+    <!-- -------------------------------------------------------------- -->
+    <!--   ÚLTIMOS EVENTOS                                              -->
+    <!-- -------------------------------------------------------------- -->
     <h2 class="mt-5 mb-3">Últimos Eventos</h2>
     <div class="table-responsive">
-      <table class="table table-hover align-middle">
+      <table id="eventsTable" class="table table-hover align-middle">
         <thead class="table-light">
-          <tr><th>ID</th><th>Objeto</th><th>Prateleira</th><th>Evento</th><th>Hora</th></tr>
+          <tr>
+            <th>ID</th>
+            <th>Objeto</th>
+            <th>Prateleira</th>
+            <th>Posição</th>
+            <th>Evento</th>
+            <th>Hora</th>
+          </tr>
         </thead>
         <tbody>
           {% for e in recentes %}
@@ -122,17 +193,37 @@
             <td>{{ e.track_id }}</td>
             <td>{{ e.objeto }}</td>
             <td>{{ e.prateleira }}</td>
-            <td>{{ e.evento }}</td>
+            <td>{{ e.posicao or '—' }}</td>
+            <td>
+              {% if e.evento == 'entrada' %}
+                <span class="badge bg-success">Entrada</span>
+              {% elif e.evento == 'saída' %}
+                <span class="badge bg-danger">Saída</span>
+              {% else %}
+                <span class="badge bg-secondary">{{ e.evento }}</span>
+              {% endif %}
+            </td>
             <td>{{ e.timestamp }}</td>
           </tr>
           {% endfor %}
+          {% if recentes|length == 0 %}
+          <tr>
+            <td colspan="6" class="text-center text-muted">Sem eventos recentes.</td>
+          </tr>
+          {% endif %}
         </tbody>
       </table>
     </div>
 
     <!-- Export CSV -->
     <div class="d-flex justify-content-end mt-4">
-      <a href="/export?data_inicial={{ data_inicial }}&data_final={{ data_final }}&prateleira={{ prateleira_filtro }}&classe={{ classes_filtro|join(',') }}" class="btn btn-success">
+      <a
+        href="{{ url_for('export_csv',
+                         data_inicial=data_inicial,
+                         data_final=data_final,
+                         prateleira=prateleira_filtro,
+                         **{'classe': classes_filtro}) }}"
+        class="btn btn-success">
         <i class="bi bi-download"></i> Exportar CSV
       </a>
     </div>
@@ -143,12 +234,16 @@
     <div class="modal-dialog modal-lg">
       <div class="modal-content">
         <div class="modal-header">
-          <h5 class="modal-title">Histórico da Prateleira <span id="modalShelfId"></span></h5>
+          <h5 class="modal-title">
+            Histórico da Prateleira <span id="modalShelfId"></span>
+          </h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
         <div class="modal-body">
-          <table class="table table-sm">
-            <thead><tr><th>ID</th><th>Objeto</th><th>Evento</th><th>Hora</th></tr></thead>
+          <table class="table table-sm" id="historyTable">
+            <thead>
+              <tr><th>ID</th><th>Objeto</th><th>Posição</th><th>Evento</th><th>Hora</th></tr>
+            </thead>
             <tbody id="historyBody"></tbody>
           </table>
         </div>
@@ -156,8 +251,116 @@
     </div>
   </div>
 
-  <!-- Gráficos JS -->
+  <!-- -------------------------------------------------------------- -->
+  <!--   SCRIPTS JS                                                   -->
+  <!-- -------------------------------------------------------------- -->
+
+  <!-- jQuery (obrigatório para DataTables) -->
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <!-- DataTables -->
+  <script src="https://cdn.datatables.net/1.13.5/js/jquery.dataTables.min.js"></script>
+  <script src="https://cdn.datatables.net/1.13.5/js/dataTables.bootstrap5.min.js"></script>
+  <!-- Socket.IO client -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.0/socket.io.min.js"></script>
+
   <script>
+    // 1) Inicializa DataTable na tabela de eventos
+    $(document).ready(function() {
+      $('#eventsTable').DataTable({
+        paging: true,
+        pageLength: 10,
+        order: [[5, 'desc']], // ordena pela coluna “Hora” desc
+        // sem alterações no estilo do CSS do DataTables, usa o padrão Bootstrap
+      });
+    });
+
+    // 2) Controle do feed da câmera (spinner + fallback de 3s)
+    const img = document.getElementById('cameraFeed');
+    const spinner = document.getElementById('cameraSpinner');
+    let firstFrameArrived = false;
+
+    img.onload = () => {
+      if (!firstFrameArrived) {
+        firstFrameArrived = true;
+        spinner.style.display = 'none';
+        img.style.display = 'block';
+      }
+    };
+    // Fallback: após 3s, exibe o <img> mesmo que onload não tenha disparado
+    setTimeout(() => {
+      if (!firstFrameArrived) {
+        spinner.style.display = 'none';
+        img.style.display = 'block';
+      }
+    }, 3000);
+
+    // 3) Lógica para “Zerar Visão” e “Retomar Visão”
+    let paused = false;
+
+    document.getElementById('resetButton').addEventListener('click', () => {
+      paused = true;
+      // Apenas limpa as prateleiras (cards), mantendo a lista “Objetos Fora” intacta
+      document.querySelectorAll('.shelf-col').forEach(col => {
+        const body = col.querySelector('.shelf-body');
+        const badge = col.querySelector('.occupancy-badge');
+        badge.textContent = '0 ocupadas';
+        body.innerHTML = '<span class="text-muted">Sem objetos</span>';
+      });
+      // A parte de “Objetos Fora” não é alterada
+    });
+
+    document.getElementById('resumeButton').addEventListener('click', () => {
+      paused = false;
+      // Recarrega a página para buscar dados atualizados das prateleiras
+      location.reload();
+    });
+
+    // 4) Função de busca na lista de “Objetos Fora”
+    function filterOutside() {
+      const txt = document.getElementById('searchOutside').value.toLowerCase();
+      document.querySelectorAll('#outsideList li.outside-item').forEach(li => {
+        li.style.display = li.textContent.toLowerCase().includes(txt) ? '' : 'none';
+      });
+    }
+
+    // 5) Socket.IO: indicador e atualização em tempo real das prateleiras
+    const socket = io();
+    const indicator = document.querySelector('#socketIndicator i');
+    socket.on('connect', () => indicator.classList.replace('text-danger','text-success'));
+    socket.on('disconnect', () => indicator.classList.replace('text-success','text-danger'));
+
+    socket.on('new_event', data => {
+      if (paused) return;
+      // Atualiza apenas a prateleira afetada
+      const pratId = data.prateleira.split(' ').pop();
+      const col = document.querySelector(`[data-pratid="${pratId}"]`);
+      if (!col) return;
+      const body = col.querySelector('.shelf-body');
+      const badge = col.querySelector('.occupancy-badge');
+
+      fetch(`/api/prateleira/${pratId}/history`)
+        .then(res => res.json())
+        .then(json => {
+          const entradasRecentes = json.history.filter(ev =>
+            ev.evento === 'entrada' &&
+            new Date(ev.timestamp) >= new Date(Date.now() - 24 * 60 * 60 * 1000)
+          );
+          badge.textContent = entradasRecentes.length + ' ocupadas';
+          body.innerHTML = '';
+          if (entradasRecentes.length) {
+            entradasRecentes.forEach(ev => {
+              const span = document.createElement('span');
+              span.className = 'badge bg-success me-1 mb-1';
+              span.innerHTML = `<i class="bi bi-box-seam"></i> ${ev.objeto}<br><small>Posição ${ev.posicao}</small>`;
+              body.appendChild(span);
+            });
+          } else {
+            body.innerHTML = '<span class="text-muted">Sem objetos</span>';
+          }
+        });
+    });
+
+    // 6) Função para abrir modal de histórico de uma prateleira
     function openShelfHistory(el) {
       const id = el.dataset.pratid;
       document.getElementById('modalShelfId').innerText = id;
@@ -167,41 +370,85 @@
           const body = document.getElementById('historyBody');
           body.innerHTML = '';
           json.history.forEach(ev => {
-            const row = `<tr>
-              <td>${ev.track_id}</td>
-              <td>${ev.objeto}</td>
-              <td>${ev.evento}</td>
-              <td>${new Date(ev.timestamp).toLocaleString()}</td>
-            </tr>`;
+            const row = `
+              <tr>
+                <td>${ev.track_id}</td>
+                <td>${ev.objeto}</td>
+                <td>${ev.posicao || '—'}</td>
+                <td>${
+                  ev.evento === 'entrada'
+                    ? '<span class="badge bg-success">Entrada</span>'
+                    : ev.evento === 'saída'
+                      ? '<span class="badge bg-danger">Saída</span>'
+                      : `<span class="badge bg-secondary">${ev.evento}</span>`
+                }</td>
+                <td>${new Date(ev.timestamp).toLocaleString()}</td>
+              </tr>`;
             body.insertAdjacentHTML('beforeend', row);
           });
           new bootstrap.Modal(document.getElementById('historyModal')).show();
         });
     }
 
+    // 7) Gráfico Doughnut de entradas por prateleira
     const ctx1 = document.getElementById('prateleiraChart');
     new Chart(ctx1, {
       type: 'doughnut',
       data: {
-        labels: [{% for r in entradas %}'{{ r.prateleira }}',{% endfor %}],
-        datasets: [{ data: [{% for r in entradas %}{{ r.total_entradas }},{% endfor %}] }]
+        labels: [
+          {% for r in entradas %}'{{ r.prateleira }}'{% if not loop.last %},{% endif %}{% endfor %}
+        ],
+        datasets: [{
+          data: [
+            {% for r in entradas %}{{ r.total_entradas }}{% if not loop.last %},{% endif %}{% endfor %}
+          ],
+          backgroundColor: [
+            '#4e79a7','#f28e2b','#e15759','#76b7b2',
+            '#59a14f','#edc949','#af7aa1','#ff9da7',
+            '#9c755f','#bab0ab'
+          ]
+        }]
+      },
+      options: {
+        plugins: {
+          legend: { position: 'bottom' },
+          tooltip: {
+            callbacks: {
+              label: context => {
+                const total = context.dataset.data.reduce((a,b) => a+b, 0);
+                const value = context.raw;
+                const perc = ((value/total)*100).toFixed(1);
+                return `${context.label}: ${value} (${perc}%)`;
+              }
+            }
+          }
+        }
       }
     });
 
+    // 8) Gráfico de barras de eventos por data
     const ctx2 = document.getElementById('dataChart');
     new Chart(ctx2, {
       type: 'bar',
       data: {
-        labels: [{% for r in eventos %}'{{ r.data }}',{% endfor %}],
-        datasets: [{ label: 'Eventos', data: [{% for r in eventos %}{{ r.total_eventos }},{% endfor %}], backgroundColor: '#198754' }]
+        labels: [
+          {% for r in eventos %}'{{ r.data }}'{% if not loop.last %},{% endif %}{% endfor %}
+        ],
+        datasets: [{
+          label: 'Eventos',
+          data: [
+            {% for r in eventos %}{{ r.total_eventos }}{% if not loop.last %},{% endif %}{% endfor %}
+          ],
+          backgroundColor: '#198754'
+        }]
       },
-      options: { scales:{ y:{ beginAtZero:true } } }
+      options: {
+        scales: { y: { beginAtZero: true } }
+      }
     });
   </script>
 
   <!-- Bootstrap JS -->
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-  <!-- Bootstrap Icons -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
 </body>
 </html>
