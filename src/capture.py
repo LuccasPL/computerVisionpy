@@ -137,19 +137,22 @@ def main():
             # checa saídas por ausência
             for mid in list(estado):
                 if mid not in current_mids:
-                    missing[mid] += 1
+                    missing[mid] = missing.get(mid, 0) + 1
                     if missing[mid] >= MISSING_THRESHOLD:
-                        s_old = estado[mid]['shelf_id']
-                        p_old = estado[mid]['pos_id']
-                        c_old = estado[mid]['cls']
-                        inserir_evento(mid, c_old, f"Prateleira {s_old}", f"Posição {p_old}", "saída")
-                        # libera posição
-                        pos_occupied.pop((s_old,p_old), None)
-                        # limpa estado
+                        entry = estado[mid]
+                        # só emite saída se realmente tinha shelf e posição
+                        if 'shelf_id' in entry and 'pos_id' in entry and 'cls' in entry:
+                            s_old = entry['shelf_id']
+                            p_old = entry['pos_id']
+                            c_old = entry['cls']
+                            inserir_evento(mid, c_old, f"Prateleira {s_old}", f"Posição {p_old}", "saída")
+                            # libera a posição ocupada
+                            pos_occupied.pop((s_old, p_old), None)
+                        # sempre limpa estado mesmo que estivesse incompleto
                         del estado[mid]
                         del missing[mid]
                         # limpa mapping DeepSORT→my_id
-                        for k,v in list(dsort2app.items()):
+                        for k, v in list(dsort2app.items()):
                             if v == mid:
                                 del dsort2app[k]
 
