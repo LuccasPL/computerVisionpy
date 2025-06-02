@@ -19,6 +19,44 @@ login_manager = LoginManager()
 login_manager.login_view = 'login'
 login_manager.init_app(app)
 
+class User(UserMixin):
+    def __init__(self, id_, username, password_hash):
+        self.id = id_
+        self.username = username
+        self.password_hash = password_hash
+
+@login_manager.user_loader
+def load_user(user_id):
+    conn = get_connection()
+    if not conn:
+        return None
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("SELECT id, username, password_hash FROM Usuarios WHERE id=%s", (user_id,))
+    row = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    if row:
+        return User(row['id'], row['username'], row['password_hash'])
+    return None
+
+def init_users_table():
+    conn = get_connection()
+    if not conn:
+        return
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS Usuarios (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            username VARCHAR(150) UNIQUE NOT NULL,
+            password_hash VARCHAR(255) NOT NULL
+        );
+        """
+    )
+    conn.commit()
+    cursor.close()
+    conn.close()
+
 # ----------------------------
 # 2) CONFIGURAÇÃO DO BD MySQL
 # ----------------------------
@@ -63,48 +101,7 @@ def video_feed():
     )
 
 # ----------------------------
-# 4) MODELO DE USUÁRIO PARA FLASK-LOGIN
-# ----------------------------
-class User(UserMixin):
-    def __init__(self, id_, username, password_hash):
-        self.id = id_
-        self.username = username
-        self.password_hash = password_hash
-
-@login_manager.user_loader
-def load_user(user_id):
-    conn = get_connection()
-    if not conn:
-        return None
-    cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT id, username, password_hash FROM Usuarios WHERE id=%s", (user_id,))
-    row = cursor.fetchone()
-    cursor.close()
-    conn.close()
-    if row:
-        return User(row['id'], row['username'], row['password_hash'])
-    return None
-
-def init_users_table():
-    conn = get_connection()
-    if not conn:
-        return
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS Usuarios (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            username VARCHAR(150) UNIQUE NOT NULL,
-            password_hash VARCHAR(255) NOT NULL
-        );
-        """
-    )
-    conn.commit()
-    cursor.close()
-    conn.close()
-
-# ----------------------------
-# 5) ROTAS DE AUTENTICAÇÃO
+# 4) ROTAS DE AUTENTICAÇÃO
 # ----------------------------
 @app.route('/register', methods=['GET', 'POST'])
 def register():
@@ -167,7 +164,7 @@ def logout():
     return redirect(url_for('login'))
 
 # ----------------------------
-# 6) API: HISTÓRICO DE EVENTOS POR PRATELEIRA
+# 5) API: HISTÓRICO DE EVENTOS POR PRATELEIRA
 # ----------------------------
 @app.route('/api/prateleira/<int:prat_id>/history')
 @login_required
@@ -190,6 +187,53 @@ def shelf_history(prat_id):
     cursor.close()
     conn.close()
     return jsonify(history=history)
+
+# ----------------------------
+# 6) ROTA /limpar_pendentes (marca saída para itens “presos”)
+# ----------------------------
+@app.route('/limpar_pendentes', methods=['POST'])
+@login_required
+def clear_pending_entries():
+    conn = get_connection()
+    if not conn:
+        flash('Erro ao tentar limpar pendentes.', 'danger')
+        return redirect(url_for('dashboard'))
+
+    cursor = conn.cursor(dictionary=True)
+    # Seleciona todos cujo último evento foi 'entrada'
+    cursor.execute(
+        """
+        SELECT e.track_id, e.objeto
+        FROM Eventos e
+        JOIN (
+            SELECT track_id, MAX(timestamp) AS maxt
+            FROM Eventos
+            GROUP BY track_id
+        ) m ON e.track_id = m.track_id AND e.timestamp = m.maxt
+        WHERE e.evento = 'entrada';
+        """
+    )
+    rows = cursor.fetchall()
+    if not rows:
+        cursor.close()
+        conn.close()
+        flash('Não há itens pendentes para limpar.', 'info')
+        return redirect(url_for('dashboard'))
+
+    # Insere evento de 'saída' para cada um
+    for r in rows:
+        cursor.execute(
+            """
+            INSERT INTO Eventos (track_id, objeto, prateleira, posicao, evento, timestamp)
+            VALUES (%s, %s, %s, %s, %s, NOW());
+            """,
+            (r['track_id'], r['objeto'], 'Fora da prateleira', None, 'saída')
+        )
+    conn.commit()
+    cursor.close()
+    conn.close()
+    flash(f'{len(rows)} item(ns) marcados como saída.', 'success')
+    return redirect(url_for('dashboard'))
 
 # ----------------------------
 # 7) ROTA PRINCIPAL: DASHBOARD
@@ -223,7 +267,7 @@ def dashboard():
         key=lambda s: int(s.split()[-1])
     )
 
-    # 7.4) Monta lista de prateleiras + objetos (somente se o ÚLTIMO evento for 'entrada' dentro de 24h)
+    # 7.4) Monta lista de prateleiras + objetos (últimas 24h, último evento 'entrada')
     shelves = []
     for prat in prateleiras:
         base_query = (
@@ -246,7 +290,6 @@ def dashboard():
         cursor.execute(base_query, params)
         objs = []
         for o in cursor.fetchall():
-            # Pega a última posição (x,y) de Detecoes
             cursor.execute(
                 "SELECT x, y FROM Detecoes WHERE track_id=%s ORDER BY timestamp DESC LIMIT 1;",
                 (o['track_id'],)
@@ -260,7 +303,7 @@ def dashboard():
             })
         shelves.append({'id': prat.split()[-1], 'objects': objs})
 
-    # 7.5) Objetos que estão “fora” (último evento é saída ou prateleira='Fora da prateleira')
+    # 7.5) Objetos “fora” (último evento = 'saída' ou prateleira = 'Fora da prateleira')
     cursor.execute(
         "SELECT e.track_id, e.objeto, e.posicao "
         "FROM Eventos e "
@@ -284,7 +327,7 @@ def dashboard():
             'pos_y':    pos['y']
         })
 
-    # 7.6) Entradas por prateleira (Doughnut)
+    # 7.6) Entradas por prateleira (Gráfico Doughnut)
     query1 = "SELECT prateleira, COUNT(*) AS total_entradas FROM Eventos WHERE evento='entrada'"
     params1 = []
     if prateleira_filtro:
@@ -293,7 +336,7 @@ def dashboard():
     cursor.execute(query1, params1)
     entradas_por_prateleira = cursor.fetchall()
 
-    # 7.7) Eventos por data (Bar)
+    # 7.7) Eventos por data (Gráfico de barras)
     query2 = "SELECT DATE(timestamp) AS data, COUNT(*) AS total_eventos FROM Eventos WHERE 1=1"
     params2 = []
     if data_inicial:
@@ -304,7 +347,7 @@ def dashboard():
     cursor.execute(query2, params2)
     eventos_por_data = cursor.fetchall()
 
-    # 7.8) Últimos 10 eventos (tabela)
+    # 7.8) Últimos 10 eventos (Tabela)
     query3 = "SELECT track_id, objeto, prateleira, posicao, evento, timestamp FROM Eventos"
     filters = []
     params3 = []
@@ -358,7 +401,7 @@ def dashboard():
     )
 
 # ----------------------------
-# 8) EMISSÃO DE EVENTOS VIA SOCKET.IO
+# 8) SOCKET.IO: emitir eventos em tempo real
 # ----------------------------
 @socketio.on('new_event')
 def handle_new_event(data):
@@ -420,7 +463,7 @@ def export_csv():
     return response
 
 # ----------------------------
-# FUNÇÃO DE LIMPEZA AO INICIAR
+# 10) FUNÇÃO DE LIMPEZA AO INICIAR (não chamada automaticamente)
 # ----------------------------
 def clear_ongoing_entries():
     """
@@ -433,7 +476,7 @@ def clear_ongoing_entries():
         return
 
     cursor = conn.cursor(dictionary=True)
-    # Seleciona todos os objetos cujo último evento foi 'entrada'
+    # Seleciona todos cujos últimos eventos são 'entrada'
     cursor.execute(
         """
         SELECT e.track_id, e.objeto
@@ -452,7 +495,7 @@ def clear_ongoing_entries():
         conn.close()
         return
 
-    # Insere evento de saída para cada um deles
+    # Insere evento de saída para cada um
     for r in rows:
         cursor.execute(
             """
@@ -465,12 +508,12 @@ def clear_ongoing_entries():
     conn.commit()
     cursor.close()
     conn.close()
-    print(f"Limpeza: inseridos {len(rows)} eventos de saída para entradas pendentes.")
+    print(f"Limpeza (não automática): inseridos {len(rows)} eventos de saída para entradas pendentes.")
 
 # ----------------------------
-# PONTO DE ENTRADA
+# 11) PONTO DE ENTRADA
 # ----------------------------
 if __name__ == '__main__':
     init_users_table()
-    clear_ongoing_entries()   # <— LIMPA EVENTOS DE ENTRADA PENDENTE
+    # OBS: não chamamos clear_ongoing_entries() aqui para não limpar automaticamente
     socketio.run(app, host='0.0.0.0', port=5000, debug=True)

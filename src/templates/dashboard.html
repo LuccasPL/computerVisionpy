@@ -14,15 +14,55 @@
 
   <style>
     body { background: #f5f7fa; }
-    .shelf-card { background: #ffffff; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); cursor: pointer; }
-    .shelf-header { background: #007bff; color: #fff; padding: .5rem; font-weight: 600; text-align: center; display: flex; justify-content: space-between; align-items: center; border-top-left-radius: 12px; border-top-right-radius: 12px; }
-    .shelf-body { min-height: 100px; padding: .5rem; display: flex; flex-wrap: wrap; gap: .5rem; }
-    .outside-list { background: #fff; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); padding: 1rem; }
-    #cameraContainer { position: relative; }
-    #cameraSpinner { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); }
-
-    /* Opcional: melhora a distância entre botões no filtro */
-    .filter-buttons { display: flex; gap: 0.5rem; }
+    .shelf-card {
+      background: #ffffff;
+      border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      cursor: pointer;
+      transition: transform 0.1s, box-shadow 0.1s;
+    }
+    .shelf-card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+    .shelf-header {
+      background: #007bff;
+      color: #fff;
+      padding: .5rem;
+      font-weight: 600;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-top-left-radius: 12px;
+      border-top-right-radius: 12px;
+    }
+    .shelf-body {
+      min-height: 100px;
+      padding: .5rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: .5rem;
+    }
+    .outside-list {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      padding: 1rem;
+    }
+    #cameraContainer {
+      position: relative;
+    }
+    #cameraSpinner {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%,-50%);
+    }
+    .filter-buttons {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
   </style>
 </head>
 <body>
@@ -35,7 +75,9 @@
       </div>
     </div>
 
-    <!-- Filtros -->
+    <!-- ===================================================== -->
+    <!--                       FILTROS                         -->
+    <!-- ===================================================== -->
     <form method="get" class="row g-3 mb-4 align-items-end">
       <div class="col-md-2">
         <label class="form-label">Data Inicial</label>
@@ -68,16 +110,23 @@
       </div>
       <div class="col-md-2">
         <div class="filter-buttons">
+          <!-- 1) Aplicar Filtros (GET) -->
           <button type="submit" class="btn btn-primary">Aplicar Filtros</button>
-          <button type="button" id="resetButton" class="btn btn-warning">Zerar Visão</button>
+
+          <!-- 2) Botão Limpar Entradas Pendentes (via fetch POST) -->
+          <button type="button" id="clearPendingBtn" class="btn btn-warning">
+            Limpar Entradas Pendentes
+          </button>
+
+          <!-- 3) Retomar Visão (recarrega a página) -->
           <button type="button" id="resumeButton" class="btn btn-success">Retomar Visão</button>
         </div>
       </div>
     </form>
 
-    <!-- -------------------------------------------------------------- -->
-    <!--  VISÃO DA CÂMERA (LIVE FEED)                                   -->
-    <!-- -------------------------------------------------------------- -->
+    <!-- ===================================================== -->
+    <!--          VISÃO DA CÂMERA EM TEMPO REAL                 -->
+    <!-- ===================================================== -->
     <h2 class="mt-5 mb-3">Visão do Armazém em Tempo Real</h2>
     <div class="row mb-5">
       <div class="col-12 text-center" id="cameraContainer">
@@ -93,9 +142,9 @@
       </div>
     </div>
 
-    <!-- -------------------------------------------------------------- -->
-    <!--   PRATELEIRAS (E POSIÇÕES)                                     -->
-    <!-- -------------------------------------------------------------- -->
+    <!-- ===================================================== -->
+    <!--       PRATELEIRAS E POSIÇÕES (últimas 24h)            -->
+    <!-- ===================================================== -->
     <h2 class="mt-5 mb-3">Visão Geral das Prateleiras (e Posições)</h2>
     {% if shelves|length == 0 %}
       <div class="alert alert-info">Não há prateleiras com eventos recentes (últimas 24h).</div>
@@ -125,9 +174,9 @@
       {% endfor %}
     </div>
 
-    <!-- -------------------------------------------------------------- -->
-    <!--   OBJETOS FORA                                                 -->
-    <!-- -------------------------------------------------------------- -->
+    <!-- ===================================================== -->
+    <!--              OBJETOS FORA DAS PRATELEIRAS            -->
+    <!-- ===================================================== -->
     <h2 class="mt-5 mb-3">Objetos Fora das Prateleiras</h2>
     <div class="outside-list mb-3">
       <div class="mb-2">
@@ -151,9 +200,9 @@
       </ul>
     </div>
 
-    <!-- -------------------------------------------------------------- -->
-    <!--   RESUMO E GRÁFICOS                                            -->
-    <!-- -------------------------------------------------------------- -->
+    <!-- ===================================================== -->
+    <!--              RESUMO E GRÁFICOS                       -->
+    <!-- ===================================================== -->
     <div class="row mt-5">
       <div class="col-md-4">
         <div class="card text-white bg-info mb-3">
@@ -171,9 +220,9 @@
       </div>
     </div>
 
-    <!-- -------------------------------------------------------------- -->
-    <!--   ÚLTIMOS EVENTOS                                              -->
-    <!-- -------------------------------------------------------------- -->
+    <!-- ===================================================== -->
+    <!--              ÚLTIMOS EVENTOS                          -->
+    <!-- ===================================================== -->
     <h2 class="mt-5 mb-3">Últimos Eventos</h2>
     <div class="table-responsive">
       <table id="eventsTable" class="table table-hover align-middle">
@@ -215,7 +264,9 @@
       </table>
     </div>
 
-    <!-- Export CSV -->
+    <!-- ===================================================== -->
+    <!--              EXPORTAR CSV                             -->
+    <!-- ===================================================== -->
     <div class="d-flex justify-content-end mt-4">
       <a
         href="{{ url_for('export_csv',
@@ -229,7 +280,9 @@
     </div>
   </div>
 
-  <!-- Modal de Histórico -->
+  <!-- ===================================================== -->
+  <!--               MODAL DE HISTÓRICO                      -->
+  <!-- ===================================================== -->
   <div class="modal fade" id="historyModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-lg">
       <div class="modal-content">
@@ -251,11 +304,11 @@
     </div>
   </div>
 
-  <!-- -------------------------------------------------------------- -->
-  <!--   SCRIPTS JS                                                   -->
-  <!-- -------------------------------------------------------------- -->
+  <!-- ===================================================== -->
+  <!--                  SCRIPTS JS                           -->
+  <!-- ===================================================== -->
 
-  <!-- jQuery (obrigatório para DataTables) -->
+  <!-- jQuery (necessário para DataTables) -->
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
   <!-- DataTables -->
   <script src="https://cdn.datatables.net/1.13.5/js/jquery.dataTables.min.js"></script>
@@ -269,8 +322,7 @@
       $('#eventsTable').DataTable({
         paging: true,
         pageLength: 10,
-        order: [[5, 'desc']], // ordena pela coluna “Hora” desc
-        // sem alterações no estilo do CSS do DataTables, usa o padrão Bootstrap
+        order: [[5, 'desc']]
       });
     });
 
@@ -286,7 +338,6 @@
         img.style.display = 'block';
       }
     };
-    // Fallback: após 3s, exibe o <img> mesmo que onload não tenha disparado
     setTimeout(() => {
       if (!firstFrameArrived) {
         spinner.style.display = 'none';
@@ -294,28 +345,24 @@
       }
     }, 3000);
 
-    // 3) Lógica para “Zerar Visão” e “Retomar Visão”
-    let paused = false;
-
-    document.getElementById('resetButton').addEventListener('click', () => {
-      paused = true;
-      // Apenas limpa as prateleiras (cards), mantendo a lista “Objetos Fora” intacta
-      document.querySelectorAll('.shelf-col').forEach(col => {
-        const body = col.querySelector('.shelf-body');
-        const badge = col.querySelector('.occupancy-badge');
-        badge.textContent = '0 ocupadas';
-        body.innerHTML = '<span class="text-muted">Sem objetos</span>';
-      });
-      // A parte de “Objetos Fora” não é alterada
-    });
-
+    // 3) “Retomar Visão” (recarrega a página)
     document.getElementById('resumeButton').addEventListener('click', () => {
-      paused = false;
-      // Recarrega a página para buscar dados atualizados das prateleiras
       location.reload();
     });
 
-    // 4) Função de busca na lista de “Objetos Fora”
+    // 4) Limpar Entradas Pendentes via fetch POST
+    document.getElementById('clearPendingBtn').addEventListener('click', () => {
+      fetch('{{ url_for("clear_pending_entries") }}', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      })
+      .then(response => {
+        // Após limpar, recarrega a página para atualizar o dashboard
+        location.reload();
+      });
+    });
+
+    // 5) Função para filtrar “Objetos Fora”
     function filterOutside() {
       const txt = document.getElementById('searchOutside').value.toLowerCase();
       document.querySelectorAll('#outsideList li.outside-item').forEach(li => {
@@ -323,44 +370,14 @@
       });
     }
 
-    // 5) Socket.IO: indicador e atualização em tempo real das prateleiras
+    // 6) Socket.IO: atualização em tempo real (opcional)
     const socket = io();
-    const indicator = document.querySelector('#socketIndicator i');
-    socket.on('connect', () => indicator.classList.replace('text-danger','text-success'));
-    socket.on('disconnect', () => indicator.classList.replace('text-success','text-danger'));
-
+    socket.on('connect', () => { /* Pode exibir indicador aqui, se desejar */ });
     socket.on('new_event', data => {
-      if (paused) return;
-      // Atualiza apenas a prateleira afetada
-      const pratId = data.prateleira.split(' ').pop();
-      const col = document.querySelector(`[data-pratid="${pratId}"]`);
-      if (!col) return;
-      const body = col.querySelector('.shelf-body');
-      const badge = col.querySelector('.occupancy-badge');
-
-      fetch(`/api/prateleira/${pratId}/history`)
-        .then(res => res.json())
-        .then(json => {
-          const entradasRecentes = json.history.filter(ev =>
-            ev.evento === 'entrada' &&
-            new Date(ev.timestamp) >= new Date(Date.now() - 24 * 60 * 60 * 1000)
-          );
-          badge.textContent = entradasRecentes.length + ' ocupadas';
-          body.innerHTML = '';
-          if (entradasRecentes.length) {
-            entradasRecentes.forEach(ev => {
-              const span = document.createElement('span');
-              span.className = 'badge bg-success me-1 mb-1';
-              span.innerHTML = `<i class="bi bi-box-seam"></i> ${ev.objeto}<br><small>Posição ${ev.posicao}</small>`;
-              body.appendChild(span);
-            });
-          } else {
-            body.innerHTML = '<span class="text-muted">Sem objetos</span>';
-          }
-        });
+      // Se quiser atualizar dinamicamente, pode fetch /api/prateleira aqui
     });
 
-    // 6) Função para abrir modal de histórico de uma prateleira
+    // 7) Abre modal de histórico
     function openShelfHistory(el) {
       const id = el.dataset.pratid;
       document.getElementById('modalShelfId').innerText = id;
@@ -390,7 +407,7 @@
         });
     }
 
-    // 7) Gráfico Doughnut de entradas por prateleira
+    // 8) Gráfico Doughnut de entradas por prateleira
     const ctx1 = document.getElementById('prateleiraChart');
     new Chart(ctx1, {
       type: 'doughnut',
@@ -426,7 +443,7 @@
       }
     });
 
-    // 8) Gráfico de barras de eventos por data
+    // 9) Gráfico de barras de eventos por data
     const ctx2 = document.getElementById('dataChart');
     new Chart(ctx2, {
       type: 'bar',
@@ -448,7 +465,7 @@
     });
   </script>
 
-  <!-- Bootstrap JS -->
+  <!-- Bootstrap JS (inclui Popper) -->
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
